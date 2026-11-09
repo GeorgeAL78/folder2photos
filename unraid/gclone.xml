@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>gclone</Name>
+  <Repository>gjergjk/gclone:latest</Repository>
+  <Registry>https://hub.docker.com/r/gjergjk/gclone</Registry>
+  <Network>bridge</Network>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/GeorgeAL78/gclone/issues</Support>
+  <Project>https://github.com/GeorgeAL78/gclone</Project>
+  <Overview>gclone — upload new photos and videos from a folder to Google Photos, with a web interface.
+
+• Watches a folder and uploads new files on a schedule
+• Each file is uploaded once; history is kept locally
+• Duplicate check by file fingerprint, so copies of the same photo are skipped
+• Photos you delete in Google Photos are not uploaded again
+• Albums per folder, file type filter, start date
+• Dashboard, history, log and Google sign-in in the browser
+
+Needs your own Google Cloud OAuth client (Desktop app) with the Photos Library API enabled. Uses rclone for the upload. Not affiliated with Google.</Overview>
+  <Category>Backup: Cloud: MediaApp:Photos</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/GeorgeAL78/unraid-templates/main/gclone.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/GeorgeAL78/gclone/main/assets/icon.png</Icon>
+  <ExtraParams>--restart=unless-stopped</ExtraParams>
+  <Requires>A Google Cloud project with the Photos Library API enabled and an OAuth client of type "Desktop app". Setup steps are in the project README.</Requires>
+
+  <Config Name="Web UI port" Target="8080" Default="8080" Mode="tcp" Description="Port for the web interface." Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/gclone" Mode="rw" Description="Settings, upload history and the Google login. Keep it on appdata." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/gclone</Config>
+  <Config Name="Photo folder" Target="/photos" Default="" Mode="ro" Description="The folder to watch. Read only is enough." Type="Path" Display="always" Required="true" Mask="false"></Config>
+  <Config Name="TZ" Target="TZ" Default="America/New_York" Mode="" Description="Time zone for dates and the schedule." Type="Variable" Display="always" Required="false" Mask="false">America/New_York</Config>
+  <Config Name="Web password" Target="WEB_PASSWORD" Default="" Mode="" Description="Optional. If set, the web interface asks for this password (any user name)." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+</Container>

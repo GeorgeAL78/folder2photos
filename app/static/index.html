@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gclone</title>
+<style>
+:root{--bg:#0f1115;--card:#171a21;--line:#262b36;--text:#e6e8ee;--muted:#8b93a7;--accent:#4f8cff;--ok:#2fbf71;--warn:#f0b429;--err:#ef5350}
+@media (prefers-color-scheme: light){:root{--bg:#f4f6fa;--card:#fff;--line:#e2e6ee;--text:#1b1f2a;--muted:#667085}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{display:flex;align-items:center;gap:16px;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--card);position:sticky;top:0;z-index:2;flex-wrap:wrap}
+header h1{font-size:18px;margin:0;font-weight:650}
+nav{display:flex;gap:4px;flex-wrap:wrap}
+nav button{background:none;border:0;color:var(--muted);padding:8px 12px;border-radius:8px;cursor:pointer;font:inherit}
+nav button.on{background:var(--bg);color:var(--text);font-weight:600}
+main{max-width:1100px;margin:0 auto;padding:20px 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+.card h2{font-size:15px;margin:0 0 12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.stat{background:var(--bg);border-radius:10px;padding:12px}
+.stat b{display:block;font-size:22px;margin-top:2px}
+.stat span{color:var(--muted);font-size:12px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.btn{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:9px 14px;font:inherit;font-weight:600;cursor:pointer}
+.btn.sec{background:var(--bg);color:var(--text);border:1px solid var(--line)}
+.btn.danger{background:var(--err)}
+.btn:disabled{opacity:.5;cursor:default}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:99px;font-size:12px;background:var(--bg);border:1px solid var(--line)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.dot.ok{background:var(--ok)}.dot.err{background:var(--err)}.dot.run{background:var(--warn);animation:p 1s infinite}
+@keyframes p{50%{opacity:.3}}
+label{display:block;font-weight:600;margin:12px 0 4px}
+label small{font-weight:400;color:var(--muted)}
+input[type=text],input[type=number],input[type=date],input[type=password],textarea{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px 10px;font:inherit}
+textarea{min-height:120px;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+.check{display:flex;gap:8px;align-items:center;margin-top:12px;font-weight:600}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600}
+td.path{word-break:break-all}
+.muted{color:var(--muted)}
+.log{font-family:ui-monospace,Consolas,monospace;font-size:12px;max-height:520px;overflow:auto;background:var(--bg);border-radius:8px;padding:10px;white-space:pre-wrap;word-break:break-all}
+.log .error{color:var(--err)}.log .warn{color:var(--warn)}
+.bar{height:8px;background:var(--bg);border-radius:99px;overflow:hidden;margin-top:10px}
+.bar i{display:block;height:100%;background:var(--accent);width:0}
+.steps{margin:0;padding-left:20px}.steps li{margin:6px 0}
+.msg{margin-top:10px;font-weight:600}
+.hidden{display:none}
+.tabs2{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+code{background:var(--bg);padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<header>
+  <h1>gclone</h1>
+  <span class="pill" id="gpill"><span class="dot" id="gdot"></span><span id="gtxt">Google: …</span></span>
+  <nav id="nav">
+    <button data-tab="dash" class="on">Dashboard</button>
+    <button data-tab="history">History</button>
+    <button data-tab="settings">Settings</button>
+    <button data-tab="google">Google</button>
+    <button data-tab="log">Log</button>
+  </nav>
+</header>
+<main>
+
+<!-- DASHBOARD -->
+<section id="dash">
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0"><span class="dot" id="rdot" style="display:inline-block"></span> <span id="rtxt">Idle</span></h2>
+      <div class="row">
+        <button class="btn" id="runBtn">Upload now</button>
+        <button class="btn sec hidden" id="stopBtn">Stop</button>
+      </div>
+    </div>
+    <div class="bar hidden" id="bar"><i id="barfill"></i></div>
+    <p class="muted" id="cur" style="margin:8px 0 0"></p>
+  </div>
+  <div class="grid">
+    <div class="stat"><span>Uploaded</span><b id="cUp">0</b></div>
+    <div class="stat"><span>Waiting</span><b id="cPend">–</b></div>
+    <div class="stat"><span>Failed</span><b id="cFail">0</b></div>
+    <div class="stat"><span>Duplicates skipped</span><b id="cDup">0</b></div>
+    <div class="stat"><span>Skipped</span><b id="cSkip">0</b></div>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <div class="grid">
+      <div><span class="muted">Folder</span><div id="iSrc"></div></div>
+      <div><span class="muted">Album</span><div id="iAlbum"></div></div>
+      <div><span class="muted">Automatic upload</span><div id="iAuto"></div></div>
+      <div><span class="muted">Last run</span><div id="iLast"></div></div>
+      <div><span class="muted">Next run</span><div id="iNext"></div></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0">Waiting to upload</h2><button class="btn sec" id="pendRefresh">Refresh</button></div>
+    <p class="muted" id="pendNote"></p>
+    <table><thead><tr><th>File</th><th>Size</th><th>Date</th></tr></thead><tbody id="pendBody"></tbody></table>
+  </div>
+</section>
+
+<!-- HISTORY -->
+<section id="history" class="hidden">
+  <div class="card">
+    <div class="tabs2">
+      <button class="btn sec" data-st="uploaded">Uploaded</button>
+      <button class="btn sec" data-st="duplicate">Duplicates</button>
+      <button class="btn sec" data-st="failed">Failed</button>
+      <button class="btn sec" data-st="skipped">Skipped</button>
+    </div>
+    <div class="row">
+      <input type="text" id="hq" placeholder="Search file name…" style="flex:1;min-width:200px">
+      <button class="btn sec" id="retryFailed">Retry all failed</button>
+    </div>
+    <p class="muted">Files listed here are never uploaded again. "Upload again" removes a file from this list so the next run uploads it.</p>
+    <table><thead><tr><th>File</th><th>Album</th><th>When</th><th id="hErrH">Error</th><th></th></tr></thead><tbody id="hBody"></tbody></table>
+  </div>
+</section>
+
+<!-- SETTINGS -->
+<section id="settings" class="hidden">
+  <div class="card">
+    <h2>Upload settings</h2>
+    <label>Photo folder <small>(path inside the container; map your share to it in Docker)</small></label>
+    <input type="text" id="sSource">
+    <label>Google Photos album</label>
+    <input type="text" id="sAlbum">
+    <div class="check"><input type="checkbox" id="sSub"><span>Put each subfolder in its own album <small class="muted">(e.g. "Camera/2026-11-08")</small></span></div>
+    <label>File types <small>(comma separated)</small></label>
+    <input type="text" id="sExt">
+    <label>Only files dated on or after <small>(older files in the folder are ignored)</small></label>
+    <input type="date" id="sSince">
+    <div class="check"><input type="checkbox" id="sAuto"><span>Upload automatically</span></div>
+    <label>Check for new files every (minutes)</label>
+    <input type="number" id="sInt" min="1">
+    <label>Wait until a file is unchanged for (minutes) <small>(so half-copied files are not uploaded)</small></label>
+    <input type="number" id="sMin" min="0">
+    <label>rclone remote name <small>(advanced)</small></label>
+    <input type="text" id="sRemote">
+    <div class="row" style="margin-top:16px"><button class="btn" id="saveBtn">Save</button><span class="msg" id="saveMsg"></span></div>
+  </div>
+  <div class="card">
+    <h2>Ignore what's already in the folder</h2>
+    <p class="muted">Marks every matching file that is in the folder right now as "skipped", whatever its date. Only photos added afterwards get uploaded.</p>
+    <button class="btn sec" id="skipBtn">Skip all current files</button> <span class="msg" id="skipMsg"></span>
+  </div>
+</section>
+
+<!-- GOOGLE -->
+<section id="google" class="hidden">
+  <div class="card">
+    <h2>Connection</h2>
+    <div class="row"><span class="pill"><span class="dot" id="gdot2"></span><span id="gtxt2">…</span></span><button class="btn sec" id="gCheck">Test connection</button></div>
+  </div>
+  <div class="card">
+    <h2>Sign in with Google</h2>
+    <ol class="steps">
+      <li>Enter the <b>Client ID</b> and <b>Client secret</b> of your Google Cloud "Desktop app" client (Photos Library API enabled).</li>
+      <li>Click <b>Sign in with Google</b>. A Google tab opens. Choose your account and allow access.</li>
+      <li>Google then sends you to a page that <b>fails to load</b> (address starts with <code>http://127.0.0.1:53682/</code>). That is expected. Copy the <b>whole address</b> from the address bar.</li>
+      <li>Paste it below and click <b>Finish</b>.</li>
+    </ol>
+    <label>Client ID</label><input type="text" id="gId">
+    <label>Client secret</label><input type="password" id="gSecret">
+    <div class="row" style="margin-top:12px"><button class="btn" id="gStart">Sign in with Google</button></div>
+    <label>Paste the address here</label><input type="text" id="gUrl" placeholder="http://127.0.0.1:53682/?state=...&code=...">
+    <div class="row" style="margin-top:12px"><button class="btn" id="gFinish">Finish</button><span class="msg" id="gMsg"></span></div>
+  </div>
+  <div class="card">
+    <h2>Or import an existing rclone.conf</h2>
+    <p class="muted">Paste the contents of a working rclone.conf that has a Google Photos remote.</p>
+    <textarea id="gConf" placeholder="[gphotos]&#10;type = google photos&#10;..."></textarea>
+    <div class="row" style="margin-top:12px"><button class="btn sec" id="gImport">Import</button><span class="msg" id="gImpMsg"></span></div>
+  </div>
+</section>
+
+<!-- LOG -->
+<section id="log" class="hidden">
+  <div class="card"><h2>Activity</h2><div class="log" id="logBox"></div></div>
+</section>
+
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const api = async (url, body) => {
+  const r = await fetch(url, body === undefined ? {} : {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  let j = null; try { j = await r.json(); } catch(e) {}
+  if (!r.ok) throw new Error((j && j.message) || r.statusText);
+  return j;
+};
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtSize = b => b > 1e9 ? (b/1e9).toFixed(2)+' GB' : b > 1e6 ? (b/1e6).toFixed(1)+' MB' : Math.round(b/1e3)+' KB';
+const fmtT = t => t ? new Date(t).toLocaleString() : '–';
+const flash = (el, text, ok=true) => { el.textContent = text; el.style.color = ok ? 'var(--ok)' : 'var(--err)'; };
+
+let tab = 'dash';
+document.querySelectorAll('#nav button').forEach(b => b.onclick = () => show(b.dataset.tab));
+function show(t) {
+  tab = t;
+  document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+  document.querySelectorAll('main > section').forEach(s => s.classList.toggle('hidden', s.id !== t));
+  if (t === 'dash') loadPending();
+  if (t === 'history') loadHistory();
+  if (t === 'settings') loadSettings();
+  if (t === 'google') loadSettings();
+  if (t === 'log') loadLog();
+}
+
+function setGoogle(g) {
+  const cls = g.ok === true ? 'ok' : g.ok === false ? 'err' : '';
+  for (const [d, t] of [['gdot','gtxt'],['gdot2','gtxt2']]) {
+    $(d).className = 'dot ' + cls;
+    $(t).textContent = (d === 'gdot' ? 'Google: ' : '') + (g.ok ? 'Connected' : g.ok === false ? 'Not connected' : 'checking…');
+  }
+  $('gtxt2').title = g.message || '';
+  if (g.ok === false) $('gtxt2').textContent = 'Not connected: ' + (g.message || '');
+}
+
+async function status() {
+  try {
+    const s = await api('/api/status');
+    setGoogle(s.google);
+    $('rdot').className = 'dot ' + (s.running ? 'run' : 'ok');
+    $('rtxt').textContent = s.running ? `Uploading ${s.done} of ${s.total}` : 'Idle';
+    $('runBtn').disabled = s.running;
+    $('stopBtn').classList.toggle('hidden', !s.running);
+    $('bar').classList.toggle('hidden', !s.running);
+    $('barfill').style.width = s.total ? (100 * s.done / s.total) + '%' : '0';
+    $('cur').textContent = s.running && s.current ? 'Now: ' + s.current : (s.last_result ? 'Last result: ' + s.last_result : '');
+    $('cUp').textContent = s.counts.uploaded || 0;
+    $('cFail').textContent = s.counts.failed || 0;
+    $('cSkip').textContent = s.counts.skipped || 0;
+    $('cDup').textContent = s.counts.duplicate || 0;
+    $('iSrc').innerHTML = esc(s.source) + (s.source_ok ? '' : ' <span style="color:var(--err)">(not found)</span>');
+    $('iAlbum').textContent = s.album;
+    $('iAuto').textContent = s.auto ? 'On' : 'Off';
+    $('iLast').textContent = fmtT(s.last_run);
+    $('iNext').textContent = s.auto ? fmtT(s.next_run) : '–';
+    if (wasRunning && !s.running && tab === 'dash') loadPending();
+    wasRunning = s.running;
+  } catch (e) { $('rtxt').textContent = 'Cannot reach gclone'; }
+}
+let wasRunning = false;
+
+async function loadPending() {
+  const p = await api('/api/pending');
+  $('cPend').textContent = p.items.length + (p.more ? '+' : '');
+  $('pendNote').textContent = p.items.length ? (p.more ? 'Showing the first 500.' : '') : 'Nothing waiting. New photos show up here once they have been in the folder for a few minutes.';
+  $('pendBody').innerHTML = p.items.map(i => `<tr><td class="path">${esc(i.path)}</td><td>${fmtSize(i.size)}</td><td>${new Date(i.mtime*1000).toLocaleString()}</td></tr>`).join('');
+}
+
+let hStatus = 'uploaded';
+document.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { hStatus = b.dataset.st; loadHistory(); });
+let hTimer; $('hq').oninput = () => { clearTimeout(hTimer); hTimer = setTimeout(loadHistory, 300); };
+async function loadHistory() {
+  document.querySelectorAll('[data-st]').forEach(b => b.className = 'btn ' + (b.dataset.st === hStatus ? '' : 'sec'));
+  $('retryFailed').classList.toggle('hidden', hStatus !== 'failed');
+  const extra = hStatus === 'failed' || hStatus === 'duplicate';
+  $('hErrH').classList.toggle('hidden', !extra);
+  $('hErrH').textContent = hStatus === 'duplicate' ? 'Same photo as' : 'Error';
+  const rows = await api('/api/files?status=' + hStatus + '&q=' + encodeURIComponent($('hq').value));
+  $('hBody').innerHTML = rows.length ? rows.map(r => `<tr><td class="path">${esc(r.path)}</td><td>${esc(r.album)}</td><td>${fmtT(r.updated)}</td>` +
+    (extra ? `<td class="muted path">${esc(hStatus === 'duplicate' ? r.duplicate_of : r.error)}</td>` : '') +
+    `<td><button class="btn sec" data-forget="${esc(r.path)}">Upload again</button></td></tr>`).join('')
+    : '<tr><td colspan="5" class="muted">Nothing here.</td></tr>';
+  document.querySelectorAll('[data-forget]').forEach(b => b.onclick = async () => {
+    await api('/api/files/forget', {paths:[b.dataset.forget]}); loadHistory();
+  });
+}
+$('retryFailed').onclick = async () => { await api('/api/files/retry-failed', {}); loadHistory(); };
+
+async function loadSettings() {
+  const s = await api('/api/settings');
+  $('sSource').value = s.source; $('sAlbum').value = s.album; $('sSub').checked = s.subfolder_albums;
+  $('sExt').value = s.extensions; $('sSince').value = s.since; $('sAuto').checked = s.auto;
+  $('sInt').value = s.interval_minutes; $('sMin').value = s.min_age_minutes; $('sRemote').value = s.remote;
+  $('gId').value = s.client_id; $('gSecret').value = s.client_secret;
+}
+$('saveBtn').onclick = async () => {
+  try {
+    await api('/api/settings', {source:$('sSource').value, album:$('sAlbum').value, subfolder_albums:$('sSub').checked,
+      extensions:$('sExt').value, since:$('sSince').value, auto:$('sAuto').checked,
+      interval_minutes:+$('sInt').value, min_age_minutes:+$('sMin').value, remote:$('sRemote').value});
+    flash($('saveMsg'), 'Saved');
+  } catch (e) { flash($('saveMsg'), e.message, false); }
+};
+$('skipBtn').onclick = async () => {
+  if (!confirm('Mark every file currently in the folder as skipped? They will never be uploaded.')) return;
+  const r = await api('/api/skip-existing', {}); flash($('skipMsg'), r.n + ' file(s) skipped');
+};
+
+$('runBtn').onclick = async () => { await api('/api/run', {}); status(); };
+$('stopBtn').onclick = async () => { await api('/api/stop', {}); };
+$('pendRefresh').onclick = loadPending;
+
+$('gCheck').onclick = async () => { setGoogle({ok:null}); setGoogle(await api('/api/google/check', {})); };
+$('gStart').onclick = async () => {
+  try {
+    const r = await api('/api/google/start', {client_id:$('gId').value, client_secret:$('gSecret').value});
+    window.open(r.url, '_blank');
+    flash($('gMsg'), 'Google opened in a new tab. Paste the address from it here when you are done.');
+  } catch (e) { flash($('gMsg'), e.message, false); }
+};
+$('gFinish').onclick = async () => {
+  try {
+    const r = await api('/api/google/finish', {url:$('gUrl').value});
+    setGoogle(r); flash($('gMsg'), r.ok ? 'Connected to Google Photos.' : r.message, r.ok);
+    if (r.ok) $('gUrl').value = '';
+  } catch (e) { flash($('gMsg'), e.message, false); }
+};
+$('gImport').onclick = async () => {
+  try {
+    const r = await api('/api/google/import', {text:$('gConf').value});
+    setGoogle(r); flash($('gImpMsg'), r.ok ? 'Imported and connected.' : r.message, r.ok);
+    if (r.ok) $('gConf').value = '';
+  } catch (e) { flash($('gImpMsg'), e.message, false); }
+};
+
+async function loadLog() {
+  const l = await api('/api/logs');
+  const box = $('logBox'); const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+  box.innerHTML = l.map(x => `<div class="${x.level}">${esc(new Date(x.t).toLocaleString())}  ${esc(x.msg)}</div>`).join('') || '<span class="muted">No activity yet.</span>';
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+status(); loadPending();
+setInterval(() => { status(); if (tab === 'log') loadLog(); }, 3000);
+</script>
+</body>
+</html>
