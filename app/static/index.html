@@ -88,7 +88,7 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px}
   <div class="card" style="margin-top:16px">
     <div class="grid">
       <div><span class="muted">Folder</span><div id="iSrc"></div></div>
-      <div><span class="muted">Album</span><div id="iAlbum"></div></div>
+      <div><span class="muted">Albums</span><div id="iAlbum"></div></div>
       <div><span class="muted">Automatic upload</span><div id="iAuto"></div></div>
       <div><span class="muted">Last run</span><div id="iLast"></div></div>
       <div><span class="muted">Next run</span><div id="iNext"></div></div>
@@ -125,9 +125,7 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px}
     <h2>Upload settings</h2>
     <label>Photo folder <small>(path inside the container; map your share to it in Docker)</small></label>
     <input type="text" id="sSource">
-    <label>Google Photos album</label>
-    <input type="text" id="sAlbum">
-    <div class="check"><input type="checkbox" id="sSub"><span>Put each subfolder in its own album <small class="muted">(e.g. "Camera/2026-11-08")</small></span></div>
+    <div class="check"><input type="checkbox" id="sSub"><span>Make albums from subfolders <small class="muted">(photos in "Hike 2026" go to an album "Hike 2026"; photos directly in the folder get no album)</small></span></div>
     <label>File types <small>(comma separated)</small></label>
     <input type="text" id="sExt">
     <label>Only files dated on or after <small>(older files in the folder are ignored)</small></label>
@@ -234,7 +232,7 @@ async function status() {
     $('cSkip').textContent = s.counts.skipped || 0;
     $('cDup').textContent = s.counts.duplicate || 0;
     $('iSrc').innerHTML = esc(s.source) + (s.source_ok ? '' : ' <span style="color:var(--err)">(not found)</span>');
-    $('iAlbum').textContent = s.album;
+    $('iAlbum').textContent = s.subfolder_albums ? 'One per subfolder' : 'None';
     $('iAuto').textContent = s.auto ? 'On' : 'Off';
     $('iLast').textContent = fmtT(s.last_run);
     $('iNext').textContent = s.auto ? fmtT(s.next_run) : '–';
@@ -261,7 +259,7 @@ async function loadHistory() {
   $('hErrH').classList.toggle('hidden', !extra);
   $('hErrH').textContent = hStatus === 'duplicate' ? 'Same photo as' : 'Error';
   const rows = await api('/api/files?status=' + hStatus + '&q=' + encodeURIComponent($('hq').value));
-  $('hBody').innerHTML = rows.length ? rows.map(r => `<tr><td class="path">${esc(r.path)}</td><td>${esc(r.album)}</td><td>${fmtT(r.updated)}</td>` +
+  $('hBody').innerHTML = rows.length ? rows.map(r => `<tr><td class="path">${esc(r.path)}</td><td>${esc(r.album || '–')}</td><td>${fmtT(r.updated)}</td>` +
     (extra ? `<td class="muted path">${esc(hStatus === 'duplicate' ? r.duplicate_of : r.error)}</td>` : '') +
     `<td><button class="btn sec" data-forget="${esc(r.path)}">Upload again</button></td></tr>`).join('')
     : '<tr><td colspan="5" class="muted">Nothing here.</td></tr>';
@@ -273,14 +271,14 @@ $('retryFailed').onclick = async () => { await api('/api/files/retry-failed', {}
 
 async function loadSettings() {
   const s = await api('/api/settings');
-  $('sSource').value = s.source; $('sAlbum').value = s.album; $('sSub').checked = s.subfolder_albums;
+  $('sSource').value = s.source; $('sSub').checked = s.subfolder_albums;
   $('sExt').value = s.extensions; $('sSince').value = s.since; $('sAuto').checked = s.auto;
   $('sInt').value = s.interval_minutes; $('sMin').value = s.min_age_minutes; $('sRemote').value = s.remote;
   $('gId').value = s.client_id; $('gSecret').value = s.client_secret;
 }
 $('saveBtn').onclick = async () => {
   try {
-    await api('/api/settings', {source:$('sSource').value, album:$('sAlbum').value, subfolder_albums:$('sSub').checked,
+    await api('/api/settings', {source:$('sSource').value, subfolder_albums:$('sSub').checked,
       extensions:$('sExt').value, since:$('sSince').value, auto:$('sAuto').checked,
       interval_minutes:+$('sInt').value, min_age_minutes:+$('sMin').value, remote:$('sRemote').value});
     flash($('saveMsg'), 'Saved');

@@ -5,7 +5,7 @@ Watches a folder and uploads new photos and videos to Google Photos, all from a 
 - **Each file is uploaded once.** gclone keeps its own history (SQLite in `/config`), so a photo you delete in Google Photos is not uploaded again.
 - **No duplicates.** Before uploading, gclone fingerprints the file (SHA-1). A copy of a photo that was already uploaded, under another name or in another folder, is skipped and listed under Duplicates.
 - **Only new files.** On first start, only files dated from that day on are uploaded. You can change the date, or mark everything currently in the folder as skipped.
-- **Albums.** Uploads go into an album (default `Camera`). Optionally each subfolder becomes its own album, e.g. `Camera/2026-11-08`.
+- **Albums from subfolders.** Photos directly in the folder go to your Google Photos library without an album. Photos in a subfolder go to an album with the subfolder's name, e.g. `Hike 2026`. (Can be turned off.)
 - **Web interface** with dashboard, waiting list, history (uploaded / failed / skipped, with "upload again"), settings, Google sign-in, and log.
 
 Uploads use [rclone](https://rclone.org/googlephotos/)'s Google Photos backend.

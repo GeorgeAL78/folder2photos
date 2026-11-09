@@ -13,7 +13,7 @@
 • Each file is uploaded once; history is kept locally
 • Duplicate check by file fingerprint, so copies of the same photo are skipped
 • Photos you delete in Google Photos are not uploaded again
-• Albums per folder, file type filter, start date
+• Subfolders become albums; files in the top folder go to the library
 • Dashboard, history, log and Google sign-in in the browser
 
 Needs your own Google Cloud OAuth client (Desktop app) with the Photos Library API enabled. Uses rclone for the upload. Not affiliated with Google.</Overview>

@@ -42,7 +42,6 @@ SKIP_DIRS = {"@eaDir", ".Trash", ".Trashes", "#recycle", ".thumbnails", ".stfold
 DEFAULTS = {
     "source": DEFAULT_SOURCE,
     "remote": "gphotos",
-    "album": "Camera",
     "subfolder_albums": True,
     "extensions": "jpg,jpeg,heic,heif,png,mp4,mov",
     "since": datetime.now().strftime("%Y-%m-%d"),  # first start: only new files
@@ -214,12 +213,17 @@ def pending(s, limit=None):
 
 
 def album_for(s, rel):
-    album = s["album"].strip("/ ") or "Camera"
-    if s["subfolder_albums"]:
-        d = os.path.dirname(rel)
-        if d:
-            album = f"{album}/{d}"
-    return album
+    """Album named after the file's subfolder; '' (no album) for files in the top folder."""
+    if not s["subfolder_albums"]:
+        return ""
+    return os.path.dirname(rel).strip("/")
+
+
+def dest_for(s, rel):
+    album = album_for(s, rel)
+    name = os.path.basename(rel)
+    # 'upload/' adds the photo to the library without putting it in an album
+    return f"{s['remote']}:album/{album}/{name}" if album else f"{s['remote']}:upload/{name}"
 
 
 def rclone(args, timeout=None):
@@ -289,7 +293,7 @@ def run_upload():
             album = album_for(s, rel)
             state["current"] = rel
             src = os.path.join(s["source"], rel)
-            dest = f"{s['remote']}:album/{album}/{os.path.basename(rel)}"
+            dest = dest_for(s, rel)
             # duplicate check: same photo already uploaded under another path?
             dup = find_duplicate(rel, item["size"], item["mtime"])
             digest = None
@@ -318,7 +322,7 @@ def run_upload():
             if code == 0:
                 uploaded += 1
                 record(rel, item["size"], item["mtime"], album, "uploaded", sha1=digest)
-                log(f"Uploaded {rel} -> album '{album}'")
+                log(f"Uploaded {rel}" + (f" -> album '{album}'" if album else " (no album)"))
             else:
                 failed += 1
                 err = last_error_line(out)
@@ -415,7 +419,7 @@ def api_status():
         "auto": s["auto"],
         "source_ok": os.path.isdir(s["source"]),
         "source": s["source"],
-        "album": s["album"],
+        "subfolder_albums": s["subfolder_albums"],
     })
 
 
@@ -509,7 +513,7 @@ def api_get_settings():
 def api_set_settings():
     s = load_settings()
     data = request.json or {}
-    for k in ("source", "remote", "album", "extensions", "since"):
+    for k in ("source", "remote", "extensions", "since"):
         if k in data:
             s[k] = str(data[k]).strip()
     for k in ("interval_minutes", "min_age_minutes"):
