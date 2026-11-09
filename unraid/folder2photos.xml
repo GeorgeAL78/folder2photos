@@ -1,13 +1,13 @@
 <?xml version="1.0"?>
 <Container version="2">
-  <Name>folder-to-google-photos</Name>
-  <Repository>gjergjk/folder-to-google-photos:latest</Repository>
-  <Registry>https://hub.docker.com/r/gjergjk/folder-to-google-photos</Registry>
+  <Name>folder2photos</Name>
+  <Repository>gjergjk/folder2photos:latest</Repository>
+  <Registry>https://hub.docker.com/r/gjergjk/folder2photos</Registry>
   <Network>bridge</Network>
   <Privileged>false</Privileged>
-  <Support>https://github.com/GeorgeAL78/folder-to-google-photos/issues</Support>
-  <Project>https://github.com/GeorgeAL78/folder-to-google-photos</Project>
-  <Overview>Folder to Google Photos — upload new photos and videos from a folder to Google Photos, with a web interface.
+  <Support>https://github.com/GeorgeAL78/folder2photos/issues</Support>
+  <Project>https://github.com/GeorgeAL78/folder2photos</Project>
+  <Overview>Folder2Photos — upload new photos and videos from a folder to Google Photos, with a web interface.
 
 • Watches a folder and uploads new files on a schedule
 • Each file is uploaded once; history is kept locally
@@ -20,13 +20,13 @@
 Needs your own Google Cloud OAuth client (Desktop app) with the Photos Library API enabled. Uses rclone for the upload. Not affiliated with Google.</Overview>
   <Category>Backup: Cloud: MediaApp:Photos</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/GeorgeAL78/unraid-templates/main/folder-to-google-photos.xml</TemplateURL>
-  <Icon>https://raw.githubusercontent.com/GeorgeAL78/folder-to-google-photos/main/assets/icon.png</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/GeorgeAL78/unraid-templates/main/folder2photos.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/GeorgeAL78/folder2photos/main/assets/icon.png</Icon>
   <ExtraParams>--restart=unless-stopped</ExtraParams>
   <Requires>A Google Cloud project with the Photos Library API enabled and an OAuth client of type "Desktop app". Setup steps are in the project README.</Requires>
 
   <Config Name="Web UI port" Target="8080" Default="8080" Mode="tcp" Description="Port for the web interface." Type="Port" Display="always" Required="true" Mask="false">8080</Config>
-  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/folder-to-google-photos" Mode="rw" Description="Settings, upload history and the Google login. Keep it on appdata." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/folder-to-google-photos</Config>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/folder2photos" Mode="rw" Description="Settings, upload history and the Google login. Keep it on appdata." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/folder2photos</Config>
   <Config Name="Photo folder" Target="/photos" Default="" Mode="ro" Description="The folder to watch. Read only is enough." Type="Path" Display="always" Required="true" Mask="false"></Config>
   <Config Name="TZ" Target="TZ" Default="America/New_York" Mode="" Description="Time zone for dates and the schedule." Type="Variable" Display="always" Required="false" Mask="false">America/New_York</Config>
   <Config Name="Web password" Target="WEB_PASSWORD" Default="" Mode="" Description="Optional. If set, the web interface asks for this password (any user name)." Type="Variable" Display="always" Required="false" Mask="true"></Config>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Folder to Google Photos</title>
+<title>Folder2Photos</title>
 <style>
 :root{--bg:#0f1115;--card:#171a21;--line:#262b36;--text:#e6e8ee;--muted:#8b93a7;--accent:#4f8cff;--ok:#2fbf71;--warn:#f0b429;--err:#ef5350}
 @media (prefers-color-scheme: light){:root{--bg:#f4f6fa;--card:#fff;--line:#e2e6ee;--text:#1b1f2a;--muted:#667085}}
@@ -53,7 +53,7 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px}
 </head>
 <body>
 <header>
-  <h1>Folder to Google Photos</h1>
+  <h1>Folder2Photos</h1>
   <span class="pill" id="gpill"><span class="dot" id="gdot"></span><span id="gtxt">Google: …</span></span>
   <nav id="nav">
     <button data-tab="dash" class="on">Dashboard</button>
@@ -179,7 +179,7 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px}
 <section id="apitab" class="hidden">
   <div class="card">
     <h2>API token</h2>
-    <p class="muted">Scripts and AI assistants use this token. Keep it private: anyone with it can control Folder to Google Photos.</p>
+    <p class="muted">Scripts and AI assistants use this token. Keep it private: anyone with it can control Folder2Photos.</p>
     <div class="row">
       <input type="password" id="tok" readonly style="flex:1;min-width:240px">
       <button class="btn sec" id="tokShow">Show</button>
@@ -190,7 +190,7 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px}
   </div>
   <div class="card">
     <h2>Connect an AI assistant (MCP)</h2>
-    <p class="muted">Folder to Google Photos has an MCP endpoint, so assistants such as Claude can check the status, start uploads, read the history and change settings.</p>
+    <p class="muted">Folder2Photos has an MCP endpoint, so assistants such as Claude can check the status, start uploads, read the history and change settings.</p>
     <label>Claude Code</label>
     <div class="log" id="mcpCmd"></div>
     <label>Other MCP clients (JSON config)</label>
@@ -241,8 +241,8 @@ let token = '';
 function fillApi() {
   const base = location.origin;
   const shown = $('tok').type === 'text' ? token : '<token>';
-  $('mcpCmd').textContent = `claude mcp add --transport http folder-to-google-photos ${base}/mcp --header "Authorization: Bearer ${shown}"`;
-  $('mcpJson').textContent = JSON.stringify({mcpServers: {folder-to-google-photos: {type: 'http', url: base + '/mcp', headers: {Authorization: 'Bearer ' + shown}}}}, null, 2);
+  $('mcpCmd').textContent = `claude mcp add --transport http folder2photos ${base}/mcp --header "Authorization: Bearer ${shown}"`;
+  $('mcpJson').textContent = JSON.stringify({mcpServers: {folder2photos: {type: 'http', url: base + '/mcp', headers: {Authorization: 'Bearer ' + shown}}}}, null, 2);
   $('curlEx').textContent =
 `# status
 curl -H "Authorization: Bearer ${shown}" ${base}/api/v1/status
@@ -282,7 +282,7 @@ async function status() {
   try {
     const s = await api('/api/status');
     setGoogle(s.google);
-    document.title = 'Folder to Google Photos' + (s.version && s.version !== 'dev' ? ' ' + s.version : '');
+    document.title = 'Folder2Photos' + (s.version && s.version !== 'dev' ? ' ' + s.version : '');
     $('rdot').className = 'dot ' + (s.running ? 'run' : 'ok');
     $('rtxt').textContent = s.running ? `Uploading ${s.done} of ${s.total}` : 'Idle';
     $('runBtn').disabled = s.running;
@@ -301,7 +301,7 @@ async function status() {
     $('iNext').textContent = s.auto ? fmtT(s.next_run) : '–';
     if (wasRunning && !s.running && tab === 'dash') loadPending();
     wasRunning = s.running;
-  } catch (e) { $('rtxt').textContent = 'Cannot reach Folder to Google Photos'; }
+  } catch (e) { $('rtxt').textContent = 'Cannot reach Folder2Photos'; }
 }
 let wasRunning = false;
 
