@@ -61,6 +61,7 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px}
     <button data-tab="settings">Settings</button>
     <button data-tab="google">Google</button>
     <button data-tab="log">Log</button>
+    <button data-tab="apitab">API</button>
   </nav>
 </header>
 <main>
@@ -174,6 +175,35 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px}
   </div>
 </section>
 
+<!-- API -->
+<section id="apitab" class="hidden">
+  <div class="card">
+    <h2>API token</h2>
+    <p class="muted">Scripts and AI assistants use this token. Keep it private: anyone with it can control ShutterLift.</p>
+    <div class="row">
+      <input type="password" id="tok" readonly style="flex:1;min-width:240px">
+      <button class="btn sec" id="tokShow">Show</button>
+      <button class="btn sec" id="tokCopy">Copy</button>
+      <button class="btn sec" id="tokRegen">New token</button>
+    </div>
+    <span class="msg" id="tokMsg"></span>
+  </div>
+  <div class="card">
+    <h2>Connect an AI assistant (MCP)</h2>
+    <p class="muted">ShutterLift has an MCP endpoint, so assistants such as Claude can check the status, start uploads, read the history and change settings.</p>
+    <label>Claude Code</label>
+    <div class="log" id="mcpCmd"></div>
+    <label>Other MCP clients (JSON config)</label>
+    <div class="log" id="mcpJson"></div>
+    <p class="muted">Tools: get_status, list_pending, list_history, upload_now, stop_upload, retry_failed, upload_again, skip_existing_files, get_settings, update_settings, get_log, check_google.</p>
+  </div>
+  <div class="card">
+    <h2>REST API</h2>
+    <p class="muted">All endpoints are under <code>/api/v1</code> and need the header <code>Authorization: Bearer &lt;token&gt;</code>. The full list is at <a id="oaLink" href="/api/v1/openapi.json" target="_blank">/api/v1/openapi.json</a>.</p>
+    <div class="log" id="curlEx"></div>
+  </div>
+</section>
+
 <!-- LOG -->
 <section id="log" class="hidden">
   <div class="card"><h2>Activity</h2><div class="log" id="logBox"></div></div>
@@ -204,7 +234,39 @@ function show(t) {
   if (t === 'settings') loadSettings();
   if (t === 'google') loadSettings();
   if (t === 'log') loadLog();
+  if (t === 'apitab') loadApi();
 }
+
+let token = '';
+function fillApi() {
+  const base = location.origin;
+  const shown = $('tok').type === 'text' ? token : '<token>';
+  $('mcpCmd').textContent = `claude mcp add --transport http shutterlift ${base}/mcp --header "Authorization: Bearer ${shown}"`;
+  $('mcpJson').textContent = JSON.stringify({mcpServers: {shutterlift: {type: 'http', url: base + '/mcp', headers: {Authorization: 'Bearer ' + shown}}}}, null, 2);
+  $('curlEx').textContent =
+`# status
+curl -H "Authorization: Bearer ${shown}" ${base}/api/v1/status
+
+# start an upload now
+curl -X POST -H "Authorization: Bearer ${shown}" ${base}/api/v1/upload
+
+# turn automatic uploads off
+curl -X PATCH -H "Authorization: Bearer ${shown}" -H "Content-Type: application/json" \\
+     -d '{"auto": false}' ${base}/api/v1/settings`;
+}
+async function loadApi() {
+  const r = await api('/api/token'); token = r.token; $('tok').value = token;
+  $('tokRegen').disabled = r.from_env;
+  if (r.from_env) $('tokMsg').textContent = 'Set by the API_TOKEN variable.';
+  fillApi();
+}
+$('tokShow').onclick = () => { const t = $('tok'); t.type = t.type === 'password' ? 'text' : 'password'; $('tokShow').textContent = t.type === 'password' ? 'Show' : 'Hide'; fillApi(); };
+$('tokCopy').onclick = async () => { try { await navigator.clipboard.writeText(token); flash($('tokMsg'), 'Copied'); } catch (e) { $('tok').type = 'text'; $('tok').select(); flash($('tokMsg'), 'Press Ctrl+C to copy'); } };
+$('tokRegen').onclick = async () => {
+  if (!confirm('Make a new token? Anything using the old one stops working.')) return;
+  try { const r = await api('/api/token/regenerate', {}); token = r.token; $('tok').value = token; fillApi(); flash($('tokMsg'), 'New token created'); }
+  catch (e) { flash($('tokMsg'), e.message, false); }
+};
 
 function setGoogle(g) {
   const cls = g.ok === true ? 'ok' : g.ok === false ? 'err' : '';
@@ -220,6 +282,7 @@ async function status() {
   try {
     const s = await api('/api/status');
     setGoogle(s.google);
+    document.title = 'ShutterLift' + (s.version && s.version !== 'dev' ? ' ' + s.version : '');
     $('rdot').className = 'dot ' + (s.running ? 'run' : 'ok');
     $('rtxt').textContent = s.running ? `Uploading ${s.done} of ${s.total}` : 'Idle';
     $('runBtn').disabled = s.running;

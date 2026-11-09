@@ -15,6 +15,7 @@
 • Photos you delete in Google Photos are not uploaded again
 • Subfolders become albums; files in the top folder go to the library
 • Dashboard, history, log and Google sign-in in the browser
+• REST API and MCP endpoint, so scripts and AI assistants can control it
 
 Needs your own Google Cloud OAuth client (Desktop app) with the Photos Library API enabled. Uses rclone for the upload. Not affiliated with Google.</Overview>
   <Category>Backup: Cloud: MediaApp:Photos</Category>
@@ -29,4 +30,5 @@ Needs your own Google Cloud OAuth client (Desktop app) with the Photos Library A
   <Config Name="Photo folder" Target="/photos" Default="" Mode="ro" Description="The folder to watch. Read only is enough." Type="Path" Display="always" Required="true" Mask="false"></Config>
   <Config Name="TZ" Target="TZ" Default="America/New_York" Mode="" Description="Time zone for dates and the schedule." Type="Variable" Display="always" Required="false" Mask="false">America/New_York</Config>
   <Config Name="Web password" Target="WEB_PASSWORD" Default="" Mode="" Description="Optional. If set, the web interface asks for this password (any user name)." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="API token" Target="API_TOKEN" Default="" Mode="" Description="Optional. Fixed token for the API and MCP endpoint. Leave empty to use the one shown in the web interface (API tab)." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
 </Container>

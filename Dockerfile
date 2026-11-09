@@ -1,11 +1,13 @@
 FROM rclone/rclone:1.75.2 AS rclone
 
 FROM python:3.12-slim
+ARG VERSION=dev
 ENV PYTHONUNBUFFERED=1 \
     CONFIG_DIR=/config \
     SOURCE_DIR=/photos \
     PORT=8080 \
-    TZ=UTC
+    TZ=UTC \
+    APP_VERSION=${VERSION}
 RUN apt-get update \
  && apt-get install -y --no-install-recommends tzdata ca-certificates \
  && rm -rf /var/lib/apt/lists/*

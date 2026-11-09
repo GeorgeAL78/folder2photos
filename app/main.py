@@ -31,6 +31,7 @@ DB_FILE = os.path.join(CONFIG_DIR, "uploads.db")
 RCLONE_CONF = os.path.join(CONFIG_DIR, "rclone.conf")
 LOG_FILE = os.path.join(CONFIG_DIR, "shutterlift.log")
 
+VERSION = os.environ.get("APP_VERSION", "dev").lstrip("v")
 REDIRECT_URI = "http://127.0.0.1:53682/"
 SCOPES = [
     "https://www.googleapis.com/auth/photoslibrary.appendonly",
@@ -377,23 +378,182 @@ def google_remotes(text):
     return [sec for sec in cp.sections() if cp[sec].get("type") == "google photos"]
 
 
+# ---------------------------------------------------------------- actions
+# One function per action; the web UI (/api/...), the token API (/api/v1/...)
+# and the MCP endpoint (/mcp) all call these.
+def op_status():
+    with db() as con:
+        counts = {r["status"]: r["n"] for r in con.execute("SELECT status, COUNT(*) n FROM files GROUP BY status")}
+    s = load_settings()
+    return {
+        **{k: state[k] for k in ("running", "current", "done", "total", "last_run", "last_result", "next_run", "google")},
+        "counts": counts,
+        "auto": s["auto"],
+        "source_ok": os.path.isdir(s["source"]),
+        "source": s["source"],
+        "subfolder_albums": s["subfolder_albums"],
+        "version": VERSION,
+    }
+
+
+def op_pending(limit=500):
+    limit = max(1, min(int(limit or 500), 5000))
+    items = pending(load_settings(), limit=limit + 1)
+    return {"items": items[:limit], "more": len(items) > limit}
+
+
+def op_files(status="uploaded", query="", limit=500):
+    if status not in ("uploaded", "failed", "skipped", "duplicate"):
+        raise ValueError("status must be uploaded, failed, skipped or duplicate")
+    limit = max(1, min(int(limit or 500), 5000))
+    sql, args = "SELECT * FROM files WHERE status=?", [status]
+    if query:
+        sql += " AND path LIKE ?"
+        args.append(f"%{query}%")
+    sql += " ORDER BY updated DESC LIMIT ?"
+    args.append(limit)
+    with db() as con:
+        return {"items": [dict(r) for r in con.execute(sql, args)]}
+
+
+def op_forget(paths):
+    paths = [p for p in (paths or []) if isinstance(p, str)]
+    with db() as con:
+        n = sum(con.execute("DELETE FROM files WHERE path=?", (p,)).rowcount for p in paths)
+    log(f"Removed {n} file(s) from history; they will upload again on the next run.", "warn")
+    return {"ok": True, "removed": n}
+
+
+def op_retry_failed():
+    with db() as con:
+        n = con.execute("DELETE FROM files WHERE status='failed'").rowcount
+    log(f"{n} failed file(s) queued for retry.")
+    if not state["running"]:
+        threading.Thread(target=run_upload, daemon=True).start()
+    return {"ok": True, "queued": n}
+
+
+def op_skip_existing():
+    """Mark every matching file currently in the folder as skipped (never upload)."""
+    s = load_settings()
+    done = known_paths(("uploaded", "skipped", "failed", "duplicate"))
+    rows = [(rel, size, mtime, "", "skipped", now_iso())
+            for rel, size, mtime in scan(s, include_old=True) if rel not in done]
+    with db() as con:
+        con.executemany(
+            "INSERT OR IGNORE INTO files(path,size,mtime,album,status,attempts,updated) VALUES(?,?,?,?,?,0,?)",
+            rows,
+        )
+    log(f"Marked {len(rows)} existing file(s) as skipped.")
+    return {"ok": True, "skipped": len(rows)}
+
+
+def op_run():
+    if state["running"]:
+        return {"ok": False, "message": "An upload is already running"}
+    threading.Thread(target=run_upload, daemon=True).start()
+    return {"ok": True, "message": "Upload started"}
+
+
+def op_stop():
+    state["stop"] = True
+    return {"ok": True, "message": "Stopping after the current file" if state["running"] else "Nothing is running"}
+
+
+def op_get_settings():
+    s = load_settings()
+    s["client_secret"] = "********" if s.get("client_secret") else ""
+    s.pop("api_token", None)
+    return s
+
+
+SETTING_KEYS = {
+    "source": str, "remote": str, "extensions": str, "since": str,
+    "interval_minutes": int, "min_age_minutes": int,
+    "subfolder_albums": bool, "auto": bool,
+}
+
+
+def op_set_settings(data):
+    s = load_settings()
+    data = data or {}
+    unknown = [k for k in data if k not in SETTING_KEYS]
+    if unknown:
+        raise ValueError(f"Unknown setting(s): {', '.join(unknown)}")
+    for k, v in data.items():
+        typ = SETTING_KEYS[k]
+        if typ is str:
+            s[k] = str(v).strip()
+        elif typ is int:
+            s[k] = max(0, int(v))
+        else:
+            s[k] = v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on")
+    if s.get("since"):
+        datetime.strptime(s["since"], "%Y-%m-%d")  # raises ValueError if not YYYY-MM-DD
+    s["interval_minutes"] = max(1, s["interval_minutes"])
+    save_settings(s)
+    log("Settings saved.")
+    wake.set()
+    return {"ok": True, "settings": op_get_settings()}
+
+
+def op_logs(lines=200):
+    lines = max(1, min(int(lines or 200), 2000))
+    return {"items": list(logs)[-lines:]}
+
+
+def op_google_check():
+    return check_google()
+
+
 # ---------------------------------------------------------------- web
+def _basic_ok():
+    h = request.headers.get("Authorization", "")
+    if not h.startswith("Basic "):
+        return False
+    try:
+        _, pw = base64.b64decode(h[6:]).decode().split(":", 1)
+        return secrets.compare_digest(pw, WEB_PASSWORD)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def api_token():
+    return os.environ.get("API_TOKEN") or load_settings().get("api_token", "")
+
+
+def _token_ok():
+    tok = api_token()
+    h = request.headers.get("Authorization", "")
+    given = h[7:].strip() if h.startswith("Bearer ") else request.headers.get("X-API-Key", "")
+    return bool(tok and given) and secrets.compare_digest(given, tok)
+
+
 def auth_required(f):
+    """Web UI routes: the web password (if one is set), or the API token."""
     @wraps(f)
     def wrapper(*a, **kw):
-        if WEB_PASSWORD:
-            h = request.headers.get("Authorization", "")
-            ok = False
-            if h.startswith("Basic "):
-                try:
-                    _, pw = base64.b64decode(h[6:]).decode().split(":", 1)
-                    ok = secrets.compare_digest(pw, WEB_PASSWORD)
-                except Exception:  # noqa: BLE001
-                    ok = False
-            if not ok:
-                return Response("Login required", 401, {"WWW-Authenticate": 'Basic realm="ShutterLift"'})
+        if WEB_PASSWORD and not (_basic_ok() or _token_ok()):
+            return Response("Login required", 401, {"WWW-Authenticate": 'Basic realm="ShutterLift"'})
         return f(*a, **kw)
     return wrapper
+
+
+def token_required(f):
+    """API and MCP routes: always need the API token."""
+    @wraps(f)
+    def wrapper(*a, **kw):
+        if not _token_ok():
+            return jsonify(ok=False, message="Missing or wrong API token. Send 'Authorization: Bearer <token>'."), 401
+        return f(*a, **kw)
+    return wrapper
+
+
+def call(fn, *a, **kw):
+    try:
+        return jsonify(fn(*a, **kw))
+    except (ValueError, TypeError) as e:
+        return jsonify(ok=False, message=str(e)), 400
 
 
 @app.get("/health")
@@ -407,138 +567,245 @@ def index():
     return send_from_directory(app.static_folder, "index.html")
 
 
+# --- web UI routes
 @app.get("/api/status")
 @auth_required
 def api_status():
-    with db() as con:
-        counts = {r["status"]: r["n"] for r in con.execute("SELECT status, COUNT(*) n FROM files GROUP BY status")}
-    s = load_settings()
-    return jsonify({
-        **{k: state[k] for k in ("running", "current", "done", "total", "last_run", "last_result", "next_run", "google")},
-        "counts": counts,
-        "auto": s["auto"],
-        "source_ok": os.path.isdir(s["source"]),
-        "source": s["source"],
-        "subfolder_albums": s["subfolder_albums"],
-    })
+    return call(op_status)
 
 
 @app.get("/api/pending")
 @auth_required
 def api_pending():
-    s = load_settings()
-    items = pending(s, limit=501)
-    return jsonify({"items": items[:500], "more": len(items) > 500})
+    return call(op_pending, 500)
 
 
 @app.get("/api/files")
 @auth_required
 def api_files():
-    status = request.args.get("status", "uploaded")
-    q = request.args.get("q", "").strip()
-    sql = "SELECT * FROM files WHERE status=?"
-    args = [status]
-    if q:
-        sql += " AND path LIKE ?"
-        args.append(f"%{q}%")
-    sql += " ORDER BY updated DESC LIMIT 500"
-    with db() as con:
-        return jsonify([dict(r) for r in con.execute(sql, args)])
+    return call(lambda: op_files(request.args.get("status", "uploaded"), request.args.get("q", "").strip())["items"])
 
 
 @app.post("/api/files/forget")
 @auth_required
 def api_forget():
-    paths = request.json.get("paths", [])
-    with db() as con:
-        con.executemany("DELETE FROM files WHERE path=?", [(p,) for p in paths])
-    log(f"Removed {len(paths)} file(s) from history; they will upload again on the next run.", "warn")
-    return jsonify(ok=True)
+    return call(op_forget, (request.get_json(silent=True) or {}).get("paths", []))
 
 
 @app.post("/api/files/retry-failed")
 @auth_required
 def api_retry_failed():
-    with db() as con:
-        n = con.execute("DELETE FROM files WHERE status='failed'").rowcount
-    log(f"{n} failed file(s) queued for retry.")
-    if not state["running"]:
-        threading.Thread(target=run_upload, daemon=True).start()
-    return jsonify(ok=True, n=n)
+    return call(op_retry_failed)
 
 
 @app.post("/api/skip-existing")
 @auth_required
 def api_skip_existing():
-    """Mark every matching file currently in the folder as done (never upload)."""
-    s = load_settings()
-    done = known_paths(("uploaded", "skipped", "failed"))
-    rows = [(rel, size, mtime, "", "skipped", now_iso())
-            for rel, size, mtime in scan(s, include_old=True) if rel not in done]
-    with db() as con:
-        con.executemany(
-            "INSERT OR IGNORE INTO files(path,size,mtime,album,status,attempts,updated) VALUES(?,?,?,?,?,0,?)",
-            rows,
-        )
-    log(f"Marked {len(rows)} existing file(s) as skipped.")
-    return jsonify(ok=True, n=len(rows))
+    return call(op_skip_existing)
 
 
 @app.post("/api/run")
 @auth_required
 def api_run():
-    if state["running"]:
-        return jsonify(ok=False, message="Already running")
-    threading.Thread(target=run_upload, daemon=True).start()
-    return jsonify(ok=True)
+    return call(op_run)
 
 
 @app.post("/api/stop")
 @auth_required
 def api_stop():
-    state["stop"] = True
-    return jsonify(ok=True)
+    return call(op_stop)
 
 
 @app.get("/api/settings")
 @auth_required
 def api_get_settings():
-    s = load_settings()
-    s["client_secret"] = "********" if s.get("client_secret") else ""
-    return jsonify(s)
+    return call(op_get_settings)
 
 
 @app.post("/api/settings")
 @auth_required
 def api_set_settings():
-    s = load_settings()
-    data = request.json or {}
-    for k in ("source", "remote", "extensions", "since"):
-        if k in data:
-            s[k] = str(data[k]).strip()
-    for k in ("interval_minutes", "min_age_minutes"):
-        if k in data:
-            s[k] = max(0, int(data[k]))
-    for k in ("subfolder_albums", "auto"):
-        if k in data:
-            s[k] = bool(data[k])
-    s["interval_minutes"] = max(1, s["interval_minutes"])
-    save_settings(s)
-    log("Settings saved.")
-    wake.set()
-    return jsonify(ok=True)
+    return call(op_set_settings, request.get_json(silent=True) or {})
 
 
 @app.get("/api/logs")
 @auth_required
 def api_logs():
-    return jsonify(list(logs)[-500:])
+    return call(lambda: op_logs(500)["items"])
 
 
 @app.post("/api/google/check")
 @auth_required
 def api_google_check():
-    return jsonify(check_google())
+    return call(op_google_check)
+
+
+@app.get("/api/token")
+@auth_required
+def api_get_token():
+    return jsonify(token=api_token(), from_env=bool(os.environ.get("API_TOKEN")))
+
+
+@app.post("/api/token/regenerate")
+@auth_required
+def api_regen_token():
+    if os.environ.get("API_TOKEN"):
+        return jsonify(ok=False, message="The token is set by the API_TOKEN variable; change it there."), 400
+    s = load_settings()
+    s["api_token"] = secrets.token_urlsafe(32)
+    save_settings(s)
+    log("API token regenerated.", "warn")
+    return jsonify(ok=True, token=s["api_token"])
+
+
+# --- token API (/api/v1), for scripts and AI agents
+V1 = [
+    # method, path, handler(request), summary
+    ("GET", "/api/v1/status", lambda r: op_status(),
+     "Current state: running or idle, progress, counts, Google connection, next run."),
+    ("GET", "/api/v1/pending", lambda r: op_pending(r.args.get("limit", 500)),
+     "Files waiting to be uploaded (query: limit)."),
+    ("GET", "/api/v1/files", lambda r: op_files(r.args.get("status", "uploaded"), r.args.get("q", ""), r.args.get("limit", 500)),
+     "Upload history (query: status=uploaded|failed|skipped|duplicate, q=search text, limit)."),
+    ("POST", "/api/v1/upload", lambda r: op_run(), "Start an upload run now."),
+    ("POST", "/api/v1/stop", lambda r: op_stop(), "Stop the running upload after the current file."),
+    ("POST", "/api/v1/files/forget", lambda r: op_forget((r.get_json(silent=True) or {}).get("paths")),
+     "Remove files from the history so they upload again (body: {\"paths\": [...]})."),
+    ("POST", "/api/v1/files/retry-failed", lambda r: op_retry_failed(), "Retry all failed uploads."),
+    ("POST", "/api/v1/skip-existing", lambda r: op_skip_existing(),
+     "Mark every file currently in the folder as skipped."),
+    ("GET", "/api/v1/settings", lambda r: op_get_settings(), "Current settings."),
+    ("PATCH", "/api/v1/settings", lambda r: op_set_settings(r.get_json(silent=True) or {}),
+     "Change settings (body: any of source, extensions, since, interval_minutes, min_age_minutes, subfolder_albums, auto, remote)."),
+    ("GET", "/api/v1/logs", lambda r: op_logs(r.args.get("lines", 200)), "Recent activity (query: lines)."),
+    ("POST", "/api/v1/google/check", lambda r: op_google_check(), "Test the Google Photos connection."),
+]
+
+
+def _v1_view(fn):
+    @token_required
+    def view():
+        return call(fn, request)
+    return view
+
+
+for _m, _p, _fn, _doc in V1:
+    app.add_url_rule(_p, endpoint="v1" + _p.replace("/", "_") + "_" + _m, view_func=_v1_view(_fn), methods=[_m])
+
+
+@app.get("/api/v1")
+@app.get("/api/v1/openapi.json")
+def api_v1_openapi():
+    paths = {}
+    for m, p, _fn, doc in V1:
+        paths.setdefault(p, {})[m.lower()] = {"summary": doc, "responses": {"200": {"description": "JSON"}}}
+    return jsonify({
+        "openapi": "3.0.3",
+        "info": {"title": "ShutterLift API", "version": VERSION,
+                 "description": "Control ShutterLift. Send 'Authorization: Bearer <API token>' (shown in the web UI under API). "
+                                "An MCP endpoint for AI assistants is at /mcp."},
+        "components": {"securitySchemes": {"bearer": {"type": "http", "scheme": "bearer"}}},
+        "security": [{"bearer": []}],
+        "paths": paths,
+    })
+
+
+# --- MCP (Model Context Protocol), streamable HTTP transport, stateless JSON replies
+MCP_TOOLS = [
+    ("get_status", "Show whether ShutterLift is uploading or idle, progress, how many files were uploaded / failed / "
+     "skipped / duplicates, the Google Photos connection, and when the next automatic run is.",
+     {}, lambda a: op_status()),
+    ("list_pending", "List photos and videos in the watched folder that are waiting to be uploaded.",
+     {"limit": {"type": "integer", "description": "Max items (default 100)"}},
+     lambda a: op_pending(a.get("limit", 100))),
+    ("list_history", "List files from the upload history.",
+     {"status": {"type": "string", "enum": ["uploaded", "failed", "skipped", "duplicate"], "description": "Default: uploaded"},
+      "query": {"type": "string", "description": "Part of the file path to search for"},
+      "limit": {"type": "integer", "description": "Max items (default 100)"}},
+     lambda a: op_files(a.get("status", "uploaded"), a.get("query", ""), a.get("limit", 100))),
+    ("upload_now", "Start uploading new files to Google Photos now.", {}, lambda a: op_run()),
+    ("stop_upload", "Stop the running upload after the current file.", {}, lambda a: op_stop()),
+    ("retry_failed", "Retry every upload that failed.", {}, lambda a: op_retry_failed()),
+    ("upload_again", "Remove files from the history so the next run uploads them again.",
+     {"paths": {"type": "array", "items": {"type": "string"}, "description": "File paths as shown in the history"}},
+     lambda a: op_forget(a.get("paths"))),
+    ("skip_existing_files", "Mark every file currently in the folder as skipped so it is never uploaded.",
+     {}, lambda a: op_skip_existing()),
+    ("get_settings", "Show the current settings.", {}, lambda a: op_get_settings()),
+    ("update_settings", "Change settings. Pass only the fields to change.",
+     {"auto": {"type": "boolean", "description": "Upload automatically on a schedule"},
+      "interval_minutes": {"type": "integer", "description": "Minutes between automatic runs"},
+      "min_age_minutes": {"type": "integer", "description": "Only upload files unchanged for this many minutes"},
+      "since": {"type": "string", "description": "Only files dated on or after this day (YYYY-MM-DD)"},
+      "extensions": {"type": "string", "description": "Comma separated file types, e.g. jpg,jpeg,heic,mp4"},
+      "subfolder_albums": {"type": "boolean", "description": "Put photos from subfolders into albums named after the subfolder"},
+      "source": {"type": "string", "description": "Folder to watch (path inside the container)"}},
+     lambda a: op_set_settings(a)),
+    ("get_log", "Show recent activity.", {"lines": {"type": "integer", "description": "Default 100"}},
+     lambda a: op_logs(a.get("lines", 100))),
+    ("check_google", "Test the connection to Google Photos.", {}, lambda a: op_google_check()),
+]
+MCP_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
+
+
+def _rpc(id_, result=None, error=None):
+    msg = {"jsonrpc": "2.0", "id": id_}
+    if error:
+        msg["error"] = error
+    else:
+        msg["result"] = result
+    return msg
+
+
+def _mcp_handle(msg):
+    if not isinstance(msg, dict):
+        return _rpc(None, error={"code": -32600, "message": "Invalid request"})
+    method, id_, params = msg.get("method"), msg.get("id"), msg.get("params") or {}
+    if id_ is None:  # notification, e.g. notifications/initialized
+        return None
+    if method == "initialize":
+        want = params.get("protocolVersion")
+        return _rpc(id_, {
+            "protocolVersion": want if want in MCP_VERSIONS else MCP_VERSIONS[0],
+            "capabilities": {"tools": {"listChanged": False}},
+            "serverInfo": {"name": "shutterlift", "title": "ShutterLift", "version": VERSION},
+            "instructions": "ShutterLift uploads new photos and videos from a folder to Google Photos, each file once. "
+                            "Call get_status first. upload_now starts a run; list_history shows what was uploaded.",
+        })
+    if method == "ping":
+        return _rpc(id_, {})
+    if method == "tools/list":
+        return _rpc(id_, {"tools": [
+            {"name": n, "description": d,
+             "inputSchema": {"type": "object", "properties": props, "additionalProperties": False}}
+            for n, d, props, _ in MCP_TOOLS]})
+    if method == "tools/call":
+        name, args = params.get("name"), params.get("arguments") or {}
+        tool = next((t for t in MCP_TOOLS if t[0] == name), None)
+        if not tool:
+            return _rpc(id_, error={"code": -32602, "message": f"Unknown tool: {name}"})
+        try:
+            out = tool[3](args)
+            return _rpc(id_, {"content": [{"type": "text", "text": json.dumps(out, default=str, indent=1)}],
+                              "structuredContent": out, "isError": False})
+        except Exception as e:  # noqa: BLE001
+            return _rpc(id_, {"content": [{"type": "text", "text": f"Error: {e}"}], "isError": True})
+    return _rpc(id_, error={"code": -32601, "message": f"Method not found: {method}"})
+
+
+@app.route("/mcp", methods=["POST", "GET", "DELETE"])
+@token_required
+def mcp():
+    if request.method != "POST":
+        return Response(status=405, headers={"Allow": "POST"})
+    body = request.get_json(silent=True)
+    if body is None:
+        return jsonify(_rpc(None, error={"code": -32700, "message": "Parse error"})), 400
+    if isinstance(body, list):
+        out = [r for r in (_mcp_handle(m) for m in body) if r]
+        return (jsonify(out), 200) if out else ("", 202)
+    res = _mcp_handle(body)
+    return (jsonify(res), 200) if res else ("", 202)
 
 
 @app.post("/api/google/start")
@@ -625,8 +892,11 @@ def api_google_import():
 def main():
     os.makedirs(CONFIG_DIR, exist_ok=True)
     init_db()
-    load_settings()
-    log("ShutterLift started.")
+    s = load_settings()
+    if not s.get("api_token"):
+        s["api_token"] = secrets.token_urlsafe(32)
+        save_settings(s)
+    log(f"ShutterLift {VERSION} started.")
     threading.Thread(target=scheduler, daemon=True).start()
     from waitress import serve
     serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")), threads=8)
