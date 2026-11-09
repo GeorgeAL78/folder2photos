@@ -19,6 +19,6 @@ jobs:
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-          repository: gjergjk/shutterlift
+          repository: gjergjk/folder-to-google-photos
           short-description: "Upload new photos and videos from a folder to Google Photos, once each, with a web UI"
           readme-filepath: ./dockerhub/README.md

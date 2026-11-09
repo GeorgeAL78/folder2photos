@@ -1,4 +1,4 @@
-"""ShutterLift - watch a folder and upload new photos/videos to Google Photos (via rclone).
+"""Folder to Google Photos - watch a folder and upload new photos/videos to Google Photos (via rclone).
 
 Every file is uploaded once. Uploaded files are remembered in a local SQLite
 database, so deleting a photo in Google Photos never causes a re-upload.
@@ -29,7 +29,7 @@ WEB_PASSWORD = os.environ.get("WEB_PASSWORD", "")
 SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
 DB_FILE = os.path.join(CONFIG_DIR, "uploads.db")
 RCLONE_CONF = os.path.join(CONFIG_DIR, "rclone.conf")
-LOG_FILE = os.path.join(CONFIG_DIR, "shutterlift.log")
+LOG_FILE = os.path.join(CONFIG_DIR, "folder-to-google-photos.log")
 
 VERSION = os.environ.get("APP_VERSION", "dev").lstrip("v")
 REDIRECT_URI = "http://127.0.0.1:53682/"
@@ -534,7 +534,7 @@ def auth_required(f):
     @wraps(f)
     def wrapper(*a, **kw):
         if WEB_PASSWORD and not (_basic_ok() or _token_ok()):
-            return Response("Login required", 401, {"WWW-Authenticate": 'Basic realm="ShutterLift"'})
+            return Response("Login required", 401, {"WWW-Authenticate": 'Basic realm="Folder to Google Photos"'})
         return f(*a, **kw)
     return wrapper
 
@@ -701,8 +701,8 @@ def api_v1_openapi():
         paths.setdefault(p, {})[m.lower()] = {"summary": doc, "responses": {"200": {"description": "JSON"}}}
     return jsonify({
         "openapi": "3.0.3",
-        "info": {"title": "ShutterLift API", "version": VERSION,
-                 "description": "Control ShutterLift. Send 'Authorization: Bearer <API token>' (shown in the web UI under API). "
+        "info": {"title": "Folder to Google Photos API", "version": VERSION,
+                 "description": "Control Folder to Google Photos. Send 'Authorization: Bearer <API token>' (shown in the web UI under API). "
                                 "An MCP endpoint for AI assistants is at /mcp."},
         "components": {"securitySchemes": {"bearer": {"type": "http", "scheme": "bearer"}}},
         "security": [{"bearer": []}],
@@ -712,7 +712,7 @@ def api_v1_openapi():
 
 # --- MCP (Model Context Protocol), streamable HTTP transport, stateless JSON replies
 MCP_TOOLS = [
-    ("get_status", "Show whether ShutterLift is uploading or idle, progress, how many files were uploaded / failed / "
+    ("get_status", "Show whether Folder to Google Photos is uploading or idle, progress, how many files were uploaded / failed / "
      "skipped / duplicates, the Google Photos connection, and when the next automatic run is.",
      {}, lambda a: op_status()),
     ("list_pending", "List photos and videos in the watched folder that are waiting to be uploaded.",
@@ -768,8 +768,8 @@ def _mcp_handle(msg):
         return _rpc(id_, {
             "protocolVersion": want if want in MCP_VERSIONS else MCP_VERSIONS[0],
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "shutterlift", "title": "ShutterLift", "version": VERSION},
-            "instructions": "ShutterLift uploads new photos and videos from a folder to Google Photos, each file once. "
+            "serverInfo": {"name": "folder-to-google-photos", "title": "Folder to Google Photos", "version": VERSION},
+            "instructions": "Folder to Google Photos uploads new photos and videos from a folder to Google Photos, each file once. "
                             "Call get_status first. upload_now starts a run; list_history shows what was uploaded.",
         })
     if method == "ping":
@@ -896,7 +896,7 @@ def main():
     if not s.get("api_token"):
         s["api_token"] = secrets.token_urlsafe(32)
         save_settings(s)
-    log(f"ShutterLift {VERSION} started.")
+    log(f"Folder to Google Photos {VERSION} started.")
     threading.Thread(target=scheduler, daemon=True).start()
     from waitress import serve
     serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")), threads=8)

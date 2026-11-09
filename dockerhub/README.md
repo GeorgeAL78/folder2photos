@@ -1,9 +1,9 @@
-# ShutterLift
+# Folder to Google Photos
 
 Watches a folder and uploads new photos and videos to Google Photos, all from a web interface.
 
-- **Each file is uploaded once.** ShutterLift keeps its own history (SQLite in `/config`), so a photo you delete in Google Photos is not uploaded again.
-- **No duplicates.** Before uploading, ShutterLift fingerprints the file (SHA-1). A copy of a photo that was already uploaded, under another name or in another folder, is skipped and listed under Duplicates.
+- **Each file is uploaded once.** Folder to Google Photos keeps its own history (SQLite in `/config`), so a photo you delete in Google Photos is not uploaded again.
+- **No duplicates.** Before uploading, Folder to Google Photos fingerprints the file (SHA-1). A copy of a photo that was already uploaded, under another name or in another folder, is skipped and listed under Duplicates.
 - **Only new files.** On first start, only files dated from that day on are uploaded. You can change the date, or mark everything currently in the folder as skipped.
 - **Albums from subfolders.** Photos directly in the folder go to your Google Photos library without an album. Photos in a subfolder go to an album with the subfolder's name, e.g. `Hike 2026`. (Can be turned off.)
 - **API and MCP** so scripts and AI assistants can check status, start uploads and change settings.
@@ -14,14 +14,14 @@ Uploads use [rclone](https://rclone.org/googlephotos/)'s Google Photos backend.
 ## Run
 
 ```bash
-docker run -d --name shutterlift -p 8080:8080 \
-  -v /mnt/user/appdata/shutterlift:/config \
+docker run -d --name folder-to-google-photos -p 8080:8080 \
+  -v /mnt/user/appdata/folder-to-google-photos:/config \
   -v "/mnt/user/share/Photos & Videos/a6600":/photos:ro \
   -e TZ=America/New_York \
-  gjergjk/shutterlift:latest
+  gjergjk/folder-to-google-photos:latest
 ```
 
-Open `http://SERVER:8080`. On Unraid, install **ShutterLift** from Community Applications.
+Open `http://SERVER:8080`. On Unraid, install **Folder to Google Photos** from Community Applications.
 
 | Path / variable | Purpose |
 |---|---|
@@ -33,12 +33,12 @@ Open `http://SERVER:8080`. On Unraid, install **ShutterLift** from Community App
 
 ## API and AI assistants
 
-ShutterLift can be controlled by scripts and AI assistants. The **API** tab in the web interface shows the API token and ready-to-copy examples. Every API and MCP request needs the header `Authorization: Bearer <token>`. You can set your own token with the `API_TOKEN` variable.
+Folder to Google Photos can be controlled by scripts and AI assistants. The **API** tab in the web interface shows the API token and ready-to-copy examples. Every API and MCP request needs the header `Authorization: Bearer <token>`. You can set your own token with the `API_TOKEN` variable.
 
 **MCP** (for Claude and other MCP clients) is at `/mcp` (streamable HTTP). Tools: `get_status`, `list_pending`, `list_history`, `upload_now`, `stop_upload`, `retry_failed`, `upload_again`, `skip_existing_files`, `get_settings`, `update_settings`, `get_log`, `check_google`.
 
 ```bash
-claude mcp add --transport http shutterlift http://SERVER:8080/mcp --header "Authorization: Bearer <token>"
+claude mcp add --transport http folder-to-google-photos http://SERVER:8080/mcp --header "Authorization: Bearer <token>"
 ```
 
 **REST** endpoints are under `/api/v1`; the full list is at `/api/v1/openapi.json`.
@@ -67,6 +67,6 @@ Google requires your own OAuth client:
 3. In **Audience**, publish the app (otherwise the login expires after 7 days).
 4. In **Clients**, create a **Desktop app** client.
 
-Then in ShutterLift open **Google**, enter the Client ID and secret, click **Sign in with Google**, allow access, and paste the address of the page Google sends you to (it starts with `http://127.0.0.1:53682/` and does not load; that is expected). You can also import an existing `rclone.conf`.
+Then in Folder to Google Photos open **Google**, enter the Client ID and secret, click **Sign in with Google**, allow access, and paste the address of the page Google sends you to (it starts with `http://127.0.0.1:53682/` and does not load; that is expected). You can also import an existing `rclone.conf`.
 
-Source and issues: https://github.com/GeorgeAL78/shutterlift
+Source and issues: https://github.com/GeorgeAL78/folder-to-google-photos
