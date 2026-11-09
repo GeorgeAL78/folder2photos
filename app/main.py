@@ -1,4 +1,4 @@
-"""gclone - watch a folder and upload new photos/videos to Google Photos (via rclone).
+"""ShutterLift - watch a folder and upload new photos/videos to Google Photos (via rclone).
 
 Every file is uploaded once. Uploaded files are remembered in a local SQLite
 database, so deleting a photo in Google Photos never causes a re-upload.
@@ -29,7 +29,7 @@ WEB_PASSWORD = os.environ.get("WEB_PASSWORD", "")
 SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
 DB_FILE = os.path.join(CONFIG_DIR, "uploads.db")
 RCLONE_CONF = os.path.join(CONFIG_DIR, "rclone.conf")
-LOG_FILE = os.path.join(CONFIG_DIR, "gclone.log")
+LOG_FILE = os.path.join(CONFIG_DIR, "shutterlift.log")
 
 REDIRECT_URI = "http://127.0.0.1:53682/"
 SCOPES = [
@@ -391,7 +391,7 @@ def auth_required(f):
                 except Exception:  # noqa: BLE001
                     ok = False
             if not ok:
-                return Response("Login required", 401, {"WWW-Authenticate": 'Basic realm="gclone"'})
+                return Response("Login required", 401, {"WWW-Authenticate": 'Basic realm="ShutterLift"'})
         return f(*a, **kw)
     return wrapper
 
@@ -626,7 +626,7 @@ def main():
     os.makedirs(CONFIG_DIR, exist_ok=True)
     init_db()
     load_settings()
-    log("gclone started.")
+    log("ShutterLift started.")
     threading.Thread(target=scheduler, daemon=True).start()
     from waitress import serve
     serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")), threads=8)

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>gclone</title>
+<title>ShutterLift</title>
 <style>
 :root{--bg:#0f1115;--card:#171a21;--line:#262b36;--text:#e6e8ee;--muted:#8b93a7;--accent:#4f8cff;--ok:#2fbf71;--warn:#f0b429;--err:#ef5350}
 @media (prefers-color-scheme: light){:root{--bg:#f4f6fa;--card:#fff;--line:#e2e6ee;--text:#1b1f2a;--muted:#667085}}
@@ -53,7 +53,7 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px}
 </head>
 <body>
 <header>
-  <h1>gclone</h1>
+  <h1>ShutterLift</h1>
   <span class="pill" id="gpill"><span class="dot" id="gdot"></span><span id="gtxt">Google: …</span></span>
   <nav id="nav">
     <button data-tab="dash" class="on">Dashboard</button>
@@ -238,7 +238,7 @@ async function status() {
     $('iNext').textContent = s.auto ? fmtT(s.next_run) : '–';
     if (wasRunning && !s.running && tab === 'dash') loadPending();
     wasRunning = s.running;
-  } catch (e) { $('rtxt').textContent = 'Cannot reach gclone'; }
+  } catch (e) { $('rtxt').textContent = 'Cannot reach ShutterLift'; }
 }
 let wasRunning = false;
 

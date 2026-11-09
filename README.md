@@ -1,9 +1,9 @@
-# gclone
+# ShutterLift
 
 Watches a folder and uploads new photos and videos to Google Photos, all from a web interface.
 
-- **Each file is uploaded once.** gclone keeps its own history (SQLite in `/config`), so a photo you delete in Google Photos is not uploaded again.
-- **No duplicates.** Before uploading, gclone fingerprints the file (SHA-1). A copy of a photo that was already uploaded, under another name or in another folder, is skipped and listed under Duplicates.
+- **Each file is uploaded once.** ShutterLift keeps its own history (SQLite in `/config`), so a photo you delete in Google Photos is not uploaded again.
+- **No duplicates.** Before uploading, ShutterLift fingerprints the file (SHA-1). A copy of a photo that was already uploaded, under another name or in another folder, is skipped and listed under Duplicates.
 - **Only new files.** On first start, only files dated from that day on are uploaded. You can change the date, or mark everything currently in the folder as skipped.
 - **Albums from subfolders.** Photos directly in the folder go to your Google Photos library without an album. Photos in a subfolder go to an album with the subfolder's name, e.g. `Hike 2026`. (Can be turned off.)
 - **Web interface** with dashboard, waiting list, history (uploaded / failed / skipped, with "upload again"), settings, Google sign-in, and log.
@@ -13,14 +13,14 @@ Uploads use [rclone](https://rclone.org/googlephotos/)'s Google Photos backend.
 ## Run
 
 ```bash
-docker run -d --name gclone -p 8080:8080 \
-  -v /mnt/user/appdata/gclone:/config \
+docker run -d --name shutterlift -p 8080:8080 \
+  -v /mnt/user/appdata/shutterlift:/config \
   -v "/mnt/user/share/Photos & Videos/a6600":/photos:ro \
   -e TZ=America/New_York \
-  gjergjk/gclone:latest
+  gjergjk/shutterlift:latest
 ```
 
-Open `http://SERVER:8080`. On Unraid, install **gclone** from Community Applications.
+Open `http://SERVER:8080`. On Unraid, install **ShutterLift** from Community Applications.
 
 | Path / variable | Purpose |
 |---|---|
@@ -39,4 +39,4 @@ Google requires your own OAuth client:
 3. In **Audience**, publish the app (otherwise the login expires after 7 days).
 4. In **Clients**, create a **Desktop app** client.
 
-Then in gclone open **Google**, enter the Client ID and secret, click **Sign in with Google**, allow access, and paste the address of the page Google sends you to (it starts with `http://127.0.0.1:53682/` and does not load; that is expected). You can also import an existing `rclone.conf`.
+Then in ShutterLift open **Google**, enter the Client ID and secret, click **Sign in with Google**, allow access, and paste the address of the page Google sends you to (it starts with `http://127.0.0.1:53682/` and does not load; that is expected). You can also import an existing `rclone.conf`.
