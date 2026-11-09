@@ -4,9 +4,10 @@ Watches a folder and uploads new photos and videos to Google Photos, all from a 
 
 - **Each file is uploaded once.** Folder2Photos keeps its own history (SQLite in `/config`), so a photo you delete in Google Photos is not uploaded again.
 - **No duplicates.** Before uploading, Folder2Photos fingerprints the file (SHA-1). A copy of a photo that was already uploaded, under another name or in another folder, is skipped and listed under Duplicates.
-- **Only new files.** On first start, only files dated from that day on are uploaded. You can change the date, or mark everything currently in the folder as skipped.
+- **Only new files.** What is already in the folder when the app first looks is left alone, unless it is dated on or after the start date (by default the day you install it). Anything you add later is uploaded, whatever date the photo has. You can also mark everything currently in the folder as skipped.
 - **Fast.** Uploads several files at the same time (4 by default, up to 16; set in Settings).
-- **Waits for Google.** Nothing is tried, or marked as failed, until a Google login is connected.
+- **Waits for Google.** Nothing is tried, or marked as failed, until a Google login is connected. A file that keeps failing is tried 3 times, then waits for "Retry all failed".
+- **Easy on disks.** Each check only re-reads folders that changed, so a large, unchanged library is not read file by file every time.
 - **Albums from subfolders.** Photos directly in the folder go to your Google Photos library without an album. Photos in a subfolder go to an album with the subfolder's name, e.g. `Hike 2026`. (Can be turned off.)
 - **API and MCP** so scripts and AI assistants can check status, start uploads and change settings.
 - **Web interface** with dashboard, waiting list, history (uploaded / failed / skipped, with "upload again"), settings, Google sign-in, and log.
@@ -30,7 +31,7 @@ Open `http://SERVER:8080`. On Unraid, install **Folder2Photos** from Community A
 | `/config` | Settings, upload history, `rclone.conf` with the Google login |
 | `/photos` | The folder to watch (read only is fine) |
 | `TZ` | Time zone for dates and the schedule |
-| `WEB_PASSWORD` | Optional password for the web interface |
+| `WEB_PASSWORD` | Optional password for the web interface. You can also set one in the app (Settings → Web password). Without a password, anyone on your network can use the app. |
 | `API_TOKEN` | Optional fixed API token (otherwise one is generated; see the API tab) |
 
 ## API and AI assistants

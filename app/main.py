@@ -8,6 +8,7 @@ import configparser
 import hashlib
 import json
 import os
+import re
 import secrets
 import sqlite3
 import subprocess
@@ -134,6 +135,7 @@ def init_db():
         if "duplicate_of" not in cols:
             con.execute("ALTER TABLE files ADD COLUMN duplicate_of TEXT")
         con.execute("CREATE INDEX IF NOT EXISTS idx_sha1 ON files(sha1)")
+        con.execute("CREATE TABLE IF NOT EXISTS seen (path TEXT PRIMARY KEY, first_seen REAL)")
 
 
 def sha1_of(path):
@@ -166,36 +168,103 @@ def exts(s):
 
 
 def since_ts(s):
+    """Start of the 'only files dated on or after' day. Missing/invalid: no file qualifies by date."""
     try:
         return datetime.strptime(s["since"], "%Y-%m-%d").timestamp()
-    except (ValueError, TypeError):
-        return 0
+    except (ValueError, TypeError, KeyError):
+        return float("inf")
+
+
+MAX_AUTO_ATTEMPTS = 3        # failed uploads are retried this many times, then wait for "Retry all failed"
+_dircache = {}                # folder -> (folder mtime, [(name, size, mtime)], [subfolders])
+_scan_lock = threading.Lock()
+
+
+def list_media(s):
+    """(relpath, size, mtime) of every matching file in the source folder.
+
+    A folder is read again only when its own modification time changed, so a check
+    of a big, unchanged library touches the folders and not every file in them.
+    """
+    src = s["source"]
+    allowed = exts(s)
+    out, stack, alive = [], [src], set()
+    with _scan_lock:
+        while stack:
+            d = stack.pop()
+            try:
+                dmtime = os.stat(d).st_mtime_ns
+            except OSError:
+                continue
+            alive.add(d)
+            cached = _dircache.get(d)
+            if cached and cached[0] == dmtime:
+                files, subdirs = cached[1], cached[2]
+            else:
+                files, subdirs = [], []
+                try:
+                    entries = list(os.scandir(d))
+                except OSError:
+                    continue
+                for e in entries:
+                    if e.name.startswith("."):
+                        continue
+                    try:
+                        if e.is_dir(follow_symlinks=False):
+                            if e.name not in SKIP_DIRS:
+                                subdirs.append(e.path)
+                        elif e.is_file():
+                            st = e.stat()
+                            files.append((e.name, st.st_size, st.st_mtime))
+                    except OSError:
+                        pass
+                _dircache[d] = (dmtime, files, subdirs)
+            stack.extend(subdirs)
+            for name, size, mtime in files:
+                if os.path.splitext(name)[1].lower() in allowed:
+                    rel = os.path.relpath(os.path.join(d, name), src).replace(os.sep, "/")
+                    out.append((rel, size, mtime))
+        for d in list(_dircache):
+            if d not in alive:
+                del _dircache[d]
+    out.sort()
+    return out
+
+
+def first_seen(files):
+    """{relpath: time the file was first noticed}; records files seen for the first time."""
+    now = time.time()
+    with db() as con:
+        known = {r["path"]: r["first_seen"] for r in con.execute("SELECT path, first_seen FROM seen")}
+        new = [(rel, now) for rel, _, _ in files if rel not in known]
+        if new:
+            con.executemany("INSERT OR IGNORE INTO seen(path, first_seen) VALUES(?,?)", new)
+            known.update(new)
+    return known
+
+
+def baseline():
+    """When the app first looked at the folder; files that appear after this are new."""
+    s = load_settings()
+    if not s.get("baseline_ts"):
+        s["baseline_ts"] = time.time()
+        save_settings(s)
+    return float(s["baseline_ts"])
 
 
 def scan(s, include_old=False):
-    """Yield (relpath, size, mtime) for matching files in the source folder."""
-    src = s["source"]
-    allowed = exts(s)
-    cutoff = 0 if include_old else since_ts(s)
-    min_age = time.time() - int(s["min_age_minutes"]) * 60
-    for root, dirs, files in os.walk(src):
-        dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS and not d.startswith("."))
-        for name in sorted(files):
-            if name.startswith("."):
-                continue
-            if os.path.splitext(name)[1].lower() not in allowed:
-                continue
-            full = os.path.join(root, name)
-            try:
-                st = os.stat(full)
-            except OSError:
-                continue
-            if st.st_mtime < cutoff:
-                continue
-            if not include_old and st.st_mtime > min_age:
-                continue
-            rel = os.path.relpath(full, src).replace(os.sep, "/")
-            yield rel, st.st_size, st.st_mtime
+    """Yield (relpath, size, mtime) for files that are new: dated on/after the start date,
+    or added to the folder after the app started watching it."""
+    files = list_media(s)
+    if include_old:
+        yield from files
+        return
+    seen = first_seen(files)   # record first, so on the very first look everything
+    base = baseline()          # already in the folder counts as "was there before"
+    cutoff = since_ts(s)
+    for rel, size, mtime in files:
+        if mtime >= cutoff or seen.get(rel, base) > base:
+            yield rel, size, mtime
 
 
 def known_paths(statuses=("uploaded", "skipped", "duplicate")):
@@ -204,14 +273,34 @@ def known_paths(statuses=("uploaded", "skipped", "duplicate")):
         return {r["path"] for r in con.execute(q, statuses)}
 
 
+def given_up_paths():
+    with db() as con:
+        return {r["path"] for r in con.execute(
+            "SELECT path FROM files WHERE status='failed' AND attempts>=?", (MAX_AUTO_ATTEMPTS,))}
+
+
 def pending(s, limit=None):
-    done = known_paths()
+    """New files ready to upload: not done yet and left unchanged for min_age_minutes."""
+    done = known_paths() | given_up_paths()
+    min_age = int(s["min_age_minutes"]) * 60
+    seen = None
     out = []
-    for rel, size, mtime in scan(s):
-        if rel not in done:
-            out.append({"path": rel, "size": size, "mtime": mtime})
-            if limit and len(out) >= limit:
-                break
+    for rel, _size, _mtime in scan(s):
+        if rel in done:
+            continue
+        try:  # fresh look: the cached listing may be from while the file was still being copied
+            st = os.stat(os.path.join(s["source"], rel))
+        except OSError:
+            continue
+        if seen is None:  # read after scan() recorded newly seen files
+            with db() as con:
+                seen = {r["path"]: r["first_seen"] for r in con.execute("SELECT path, first_seen FROM seen")}
+        now = time.time()
+        if now - st.st_mtime < min_age or now - seen.get(rel, now) < min_age:
+            continue
+        out.append({"path": rel, "size": st.st_size, "mtime": st.st_mtime})
+        if limit and len(out) >= limit:
+            break
     return out
 
 
@@ -313,25 +402,36 @@ def run_upload():
             active.add(rel)
             show_current()
         try:
-            code, out = rclone(
-                ["copyto", os.path.join(s["source"], rel), dest_for(s, rel), "--no-check-dest",
-                 "--retries", "3", "--low-level-retries", "10", "--stats", "0"],
-                timeout=6 * 3600,
-            )
-        except subprocess.TimeoutExpired:
-            code, out = 1, "ERROR: upload timed out"
-        if code == 0:
-            record(rel, item["size"], item["mtime"], album, "uploaded", sha1=digest)
-            log(f"Uploaded {rel}" + (f" -> album '{album}'" if album else " (no album)"))
-            finish_one("uploaded")
-        else:
-            err = last_error_line(out)
-            record(rel, item["size"], item["mtime"], album, "failed", err, sha1=digest)
-            log(f"Failed {rel}: {err}", "error")
+            try:
+                code, out = rclone(
+                    ["copyto", os.path.join(s["source"], rel), dest_for(s, rel), "--no-check-dest",
+                     "--retries", "3", "--low-level-retries", "10", "--stats", "0"],
+                    timeout=6 * 3600,
+                )
+            except subprocess.TimeoutExpired:
+                code, out = 1, "ERROR: upload timed out"
+            except OSError as e:
+                code, out = 1, f"ERROR: could not start rclone: {e}"
+            if code == 0:
+                record(rel, item["size"], item["mtime"], album, "uploaded", sha1=digest)
+                log(f"Uploaded {rel}" + (f" -> album '{album}'" if album else " (no album)"))
+                finish_one("uploaded")
+            else:
+                err = last_error_line(out)
+                record(rel, item["size"], item["mtime"], album, "failed", err, sha1=digest)
+                with db() as con:
+                    tries = con.execute("SELECT attempts FROM files WHERE path=?", (rel,)).fetchone()["attempts"]
+                note = (f" (tried {tries} times; not retried automatically, use 'Retry all failed')"
+                        if tries >= MAX_AUTO_ATTEMPTS else " (will retry on the next run)")
+                log(f"Failed {rel}: {err}{note}", "error")
+                finish_one("failed")
+        except Exception as e:  # noqa: BLE001  - a bug here must not freeze the run
+            log(f"Failed {rel}: unexpected error: {e}", "error")
             finish_one("failed")
-        with count_lock:
-            active.discard(rel)
-            show_current()
+        finally:
+            with count_lock:
+                active.discard(rel)
+                show_current()
 
     try:
         if not os.path.isdir(s["source"]):
@@ -436,6 +536,7 @@ def op_status():
         "source": s["source"],
         "subfolder_albums": s["subfolder_albums"],
         "version": VERSION,
+        "password_set": password_set(),
     }
 
 
@@ -500,13 +601,14 @@ def op_run():
 
 def op_stop():
     state["stop"] = True
-    return {"ok": True, "message": "Stopping after the current file" if state["running"] else "Nothing is running"}
+    return {"ok": True, "message": "Stopping after the uploads in progress" if state["running"] else "Nothing is running"}
 
 
 def op_get_settings():
     s = load_settings()
     s["client_secret"] = "********" if s.get("client_secret") else ""
-    s.pop("api_token", None)
+    for k in ("api_token", "web_password_hash", "baseline_ts"):
+        s.pop(k, None)
     return s
 
 
@@ -531,8 +633,14 @@ def op_set_settings(data):
             s[k] = max(0, int(v))
         else:
             s[k] = v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on")
-    if s.get("since"):
-        datetime.strptime(s["since"], "%Y-%m-%d")  # raises ValueError if not YYYY-MM-DD
+    try:
+        datetime.strptime(s.get("since", ""), "%Y-%m-%d")
+    except ValueError:
+        raise ValueError("The start date ('only files dated on or after') is required, as YYYY-MM-DD.") from None
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_. -]*", s.get("remote", "")):
+        raise ValueError("The rclone remote name must not be empty (letters, numbers, _ . - and spaces).")
+    if not exts(s):
+        raise ValueError("Enter at least one file type.")
     s["interval_minutes"] = max(1, s["interval_minutes"])
     s["parallel_uploads"] = min(16, max(1, int(s.get("parallel_uploads", 4))))
     save_settings(s)
@@ -551,13 +659,36 @@ def op_google_check():
 
 
 # ---------------------------------------------------------------- web
+def _hash_pw(pw, salt=None):
+    salt = salt or secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt), 200_000)
+    return f"pbkdf2${salt}${dk.hex()}"
+
+
+def password_set():
+    return bool(WEB_PASSWORD or load_settings().get("web_password_hash"))
+
+
+def _pw_ok(pw):
+    if WEB_PASSWORD:
+        return secrets.compare_digest(pw, WEB_PASSWORD)
+    stored = load_settings().get("web_password_hash", "")
+    if not stored:
+        return False
+    try:
+        _, salt, _ = stored.split("$")
+    except ValueError:
+        return False
+    return secrets.compare_digest(_hash_pw(pw, salt), stored)
+
+
 def _basic_ok():
     h = request.headers.get("Authorization", "")
     if not h.startswith("Basic "):
         return False
     try:
         _, pw = base64.b64decode(h[6:]).decode().split(":", 1)
-        return secrets.compare_digest(pw, WEB_PASSWORD)
+        return _pw_ok(pw)
     except Exception:  # noqa: BLE001
         return False
 
@@ -577,7 +708,7 @@ def auth_required(f):
     """Web UI routes: the web password (if one is set), or the API token."""
     @wraps(f)
     def wrapper(*a, **kw):
-        if WEB_PASSWORD and not (_basic_ok() or _token_ok()):
+        if password_set() and not (_basic_ok() or _token_ok()):
             return Response("Login required", 401, {"WWW-Authenticate": 'Basic realm="Folder2Photos"'})
         return f(*a, **kw)
     return wrapper
@@ -682,6 +813,25 @@ def api_logs():
 @auth_required
 def api_google_check():
     return call(op_google_check)
+
+
+@app.post("/api/password")
+@auth_required
+def api_set_password():
+    if WEB_PASSWORD:
+        return jsonify(ok=False, message="The password is set by the WEB_PASSWORD variable; change it there."), 400
+    new = str((request.get_json(silent=True) or {}).get("password", ""))
+    if new and len(new) < 6:
+        return jsonify(ok=False, message="Use at least 6 characters."), 400
+    s = load_settings()
+    if new:
+        s["web_password_hash"] = _hash_pw(new)
+        log("Web password set.", "warn")
+    else:
+        s.pop("web_password_hash", None)
+        log("Web password removed.", "warn")
+    save_settings(s)
+    return jsonify(ok=True, password_set=password_set())
 
 
 @app.get("/api/token")

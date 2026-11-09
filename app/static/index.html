@@ -65,6 +65,9 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px}
   </nav>
 </header>
 <main>
+<div class="card hidden" id="pwWarn" style="border-color:var(--warn)">
+  <b>No web password.</b> <span class="muted">Anyone on your network can open this page, see the API token and change settings. Set a password under Settings.</span>
+</div>
 
 <!-- DASHBOARD -->
 <section id="dash">
@@ -129,8 +132,8 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px}
     <div class="check"><input type="checkbox" id="sSub"><span>Make albums from subfolders <small class="muted">(photos in "Hike 2026" go to an album "Hike 2026"; photos directly in the folder get no album)</small></span></div>
     <label>File types <small>(comma separated)</small></label>
     <input type="text" id="sExt">
-    <label>Only files dated on or after <small>(older files in the folder are ignored)</small></label>
-    <input type="date" id="sSince">
+    <label>Only files dated on or after <small>(required; photos with an older date are still uploaded if you add them to the folder later)</small></label>
+    <input type="date" id="sSince" required>
     <div class="check"><input type="checkbox" id="sAuto"><span>Upload automatically</span></div>
     <label>Check for new files every (minutes)</label>
     <input type="number" id="sInt" min="1">
@@ -146,6 +149,18 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px}
     <h2>Ignore what's already in the folder</h2>
     <p class="muted">Marks every matching file that is in the folder right now as "skipped", whatever its date. Only photos added afterwards get uploaded.</p>
     <button class="btn sec" id="skipBtn">Skip all current files</button> <span class="msg" id="skipMsg"></span>
+  </div>
+  <div class="card">
+    <h2>Web password</h2>
+    <p class="muted" id="pwState"></p>
+    <div id="pwForm">
+      <label>New password <small>(at least 6 characters; leave empty and save to remove the password)</small></label>
+      <input type="password" id="pw1" autocomplete="new-password">
+      <label>Repeat it</label>
+      <input type="password" id="pw2" autocomplete="new-password">
+      <div class="row" style="margin-top:12px"><button class="btn" id="pwSave">Save password</button><span class="msg" id="pwMsg"></span></div>
+      <p class="muted">Your browser then asks for it. Any user name works.</p>
+    </div>
   </div>
 </section>
 
@@ -284,6 +299,8 @@ async function status() {
   try {
     const s = await api('/api/status');
     setGoogle(s.google);
+    $('pwWarn').classList.toggle('hidden', !!s.password_set);
+    pwSetNow = s.password_set;
     document.title = 'Folder2Photos' + (s.version && s.version !== 'dev' ? ' ' + s.version : '');
     $('rdot').className = 'dot ' + (s.running ? 'run' : 'ok');
     $('rtxt').textContent = s.running ? `Uploading ${s.done} of ${s.total}` : 'Idle';
@@ -306,6 +323,16 @@ async function status() {
   } catch (e) { $('rtxt').textContent = 'Cannot reach Folder2Photos'; }
 }
 let wasRunning = false;
+let pwSetNow = false;
+function showPw() { $('pwState').textContent = pwSetNow ? 'A password is set.' : 'No password is set: anyone on your network can use this page.'; }
+$('pwSave').onclick = async () => {
+  if ($('pw1').value !== $('pw2').value) return flash($('pwMsg'), 'The two passwords differ', false);
+  try {
+    const r = await api('/api/password', {password: $('pw1').value});
+    pwSetNow = r.password_set; showPw(); $('pw1').value = $('pw2').value = '';
+    flash($('pwMsg'), r.password_set ? 'Password saved' : 'Password removed');
+  } catch (e) { flash($('pwMsg'), e.message, false); }
+};
 
 async function loadPending() {
   const p = await api('/api/pending');
@@ -340,6 +367,7 @@ async function loadSettings() {
   $('sExt').value = s.extensions; $('sSince').value = s.since; $('sAuto').checked = s.auto;
   $('sInt').value = s.interval_minutes; $('sMin').value = s.min_age_minutes; $('sPar').value = s.parallel_uploads; $('sRemote').value = s.remote;
   $('gId').value = s.client_id; $('gSecret').value = s.client_secret;
+  showPw();
 }
 $('saveBtn').onclick = async () => {
   try {
@@ -351,7 +379,7 @@ $('saveBtn').onclick = async () => {
 };
 $('skipBtn').onclick = async () => {
   if (!confirm('Mark every file currently in the folder as skipped? They will never be uploaded.')) return;
-  const r = await api('/api/skip-existing', {}); flash($('skipMsg'), r.n + ' file(s) skipped');
+  const r = await api('/api/skip-existing', {}); flash($('skipMsg'), r.skipped + ' file(s) skipped');
 };
 
 $('runBtn').onclick = async () => { await api('/api/run', {}); status(); };
