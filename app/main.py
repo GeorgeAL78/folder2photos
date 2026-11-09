@@ -16,6 +16,7 @@ import time
 import urllib.parse
 import urllib.request
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 
@@ -48,6 +49,7 @@ DEFAULTS = {
     "since": datetime.now().strftime("%Y-%m-%d"),  # first start: only new files
     "interval_minutes": 15,
     "min_age_minutes": 10,
+    "parallel_uploads": 4,
     "auto": True,
     "client_id": "",
     "client_secret": "",
@@ -255,6 +257,18 @@ def record(rel, size, mtime, album, status, error=None, sha1=None, duplicate_of=
 
 
 # ---------------------------------------------------------------- upload run
+def remote_configured(s):
+    """True when rclone.conf has the Google Photos login the uploads use."""
+    if not os.path.exists(RCLONE_CONF):
+        return False
+    cp = configparser.ConfigParser(interpolation=None)
+    try:
+        cp.read(RCLONE_CONF, encoding="utf-8")
+    except configparser.Error:
+        return False
+    return cp.has_section(s["remote"])
+
+
 def check_google(s=None):
     s = s or load_settings()
     if not os.path.exists(RCLONE_CONF):
@@ -276,67 +290,96 @@ def run_upload():
             return
         state.update(running=True, stop=False, done=0, total=0, current=None)
     s = load_settings()
-    uploaded = failed = dups = 0
+    counts = {"uploaded": 0, "failed": 0, "dups": 0}
+    count_lock = threading.Lock()
+    active = set()
+
+    def finish_one(key):
+        with count_lock:
+            counts[key] += 1
+            state["done"] += 1
+
+    def show_current():
+        state["current"] = ", ".join(sorted(active)) if active else None
+
+    def upload_one(item, digest):
+        rel = item["path"]
+        album = album_for(s, rel)
+        if state["stop"]:
+            with count_lock:
+                state["done"] += 1
+            return
+        with count_lock:
+            active.add(rel)
+            show_current()
+        try:
+            code, out = rclone(
+                ["copyto", os.path.join(s["source"], rel), dest_for(s, rel), "--no-check-dest",
+                 "--retries", "3", "--low-level-retries", "10", "--stats", "0"],
+                timeout=6 * 3600,
+            )
+        except subprocess.TimeoutExpired:
+            code, out = 1, "ERROR: upload timed out"
+        if code == 0:
+            record(rel, item["size"], item["mtime"], album, "uploaded", sha1=digest)
+            log(f"Uploaded {rel}" + (f" -> album '{album}'" if album else " (no album)"))
+            finish_one("uploaded")
+        else:
+            err = last_error_line(out)
+            record(rel, item["size"], item["mtime"], album, "failed", err, sha1=digest)
+            log(f"Failed {rel}: {err}", "error")
+            finish_one("failed")
+        with count_lock:
+            active.discard(rel)
+            show_current()
+
     try:
         if not os.path.isdir(s["source"]):
             raise RuntimeError(f"Source folder not found: {s['source']}")
+        if not remote_configured(s):
+            state["total"] = 0
+            raise RuntimeError("Not connected to Google yet; nothing was uploaded. Connect on the Google tab.")
         todo = pending(s)
         state["total"] = len(todo)
         if not todo:
             log("No new files.")
         else:
-            log(f"Found {len(todo)} new file(s) to upload.")
-        for item in todo:
-            if state["stop"]:
-                log("Stopped by user.", "warn")
-                break
-            rel = item["path"]
-            album = album_for(s, rel)
-            state["current"] = rel
-            src = os.path.join(s["source"], rel)
-            dest = dest_for(s, rel)
-            # duplicate check: same photo already uploaded under another path?
-            dup = find_duplicate(rel, item["size"], item["mtime"])
-            digest = None
-            if not dup:
-                try:
-                    digest = sha1_of(src)
-                except OSError as e:
-                    log(f"Cannot read {rel}: {e}", "error")
-                    state["done"] += 1
+            log(f"Found {len(todo)} new file(s) to upload ({s['parallel_uploads']} at a time).")
+        seen = {}  # fingerprints in this run, so two copies in one batch upload once
+        with ThreadPoolExecutor(max_workers=max(1, int(s["parallel_uploads"]))) as pool:
+            for item in todo:
+                if state["stop"]:
+                    break
+                rel = item["path"]
+                album = album_for(s, rel)
+                # duplicate check (done here, one file at a time, before handing out uploads)
+                dup = find_duplicate(rel, item["size"], item["mtime"])
+                digest = None
+                if not dup:
+                    try:
+                        digest = sha1_of(os.path.join(s["source"], rel))
+                    except OSError as e:
+                        log(f"Cannot read {rel}: {e}", "error")
+                        with count_lock:
+                            state["done"] += 1
+                        continue
+                    dup = find_duplicate(rel, item["size"], item["mtime"], digest) or seen.get(digest)
+                if dup:
+                    record(rel, item["size"], item["mtime"], album, "duplicate", sha1=digest, duplicate_of=dup)
+                    log(f"Skipped {rel}: same photo as {dup}", "warn")
+                    finish_one("dups")
                     continue
-                dup = find_duplicate(rel, item["size"], item["mtime"], digest)
-            if dup:
-                record(rel, item["size"], item["mtime"], album, "duplicate", sha1=digest, duplicate_of=dup)
-                log(f"Skipped {rel}: same photo as {dup}", "warn")
-                dups += 1
-                state["done"] += 1
-                continue
-            try:
-                code, out = rclone(
-                    ["copyto", src, dest, "--no-check-dest", "--retries", "3",
-                     "--low-level-retries", "10", "--stats", "0"],
-                    timeout=6 * 3600,
-                )
-            except subprocess.TimeoutExpired:
-                code, out = 1, "ERROR: upload timed out"
-            if code == 0:
-                uploaded += 1
-                record(rel, item["size"], item["mtime"], album, "uploaded", sha1=digest)
-                log(f"Uploaded {rel}" + (f" -> album '{album}'" if album else " (no album)"))
-            else:
-                failed += 1
-                err = last_error_line(out)
-                record(rel, item["size"], item["mtime"], album, "failed", err, sha1=digest)
-                log(f"Failed {rel}: {err}", "error")
-            state["done"] += 1
-        result = f"{uploaded} uploaded, {dups} duplicate(s) skipped, {failed} failed"
+                seen[digest] = rel
+                pool.submit(upload_one, item, digest)
+        if state["stop"]:
+            log("Stopped by user.", "warn")
+        result = f"{counts['uploaded']} uploaded, {counts['dups']} duplicate(s) skipped, {counts['failed']} failed"
     except Exception as e:  # noqa: BLE001
         result = f"Error: {e}"
         log(result, "error")
     finally:
         state.update(running=False, current=None, last_run=now_iso(), last_result=result)
-    if uploaded or failed or dups:
+    if any(counts.values()):
         log(f"Run finished: {result}")
 
 
@@ -469,7 +512,7 @@ def op_get_settings():
 
 SETTING_KEYS = {
     "source": str, "remote": str, "extensions": str, "since": str,
-    "interval_minutes": int, "min_age_minutes": int,
+    "interval_minutes": int, "min_age_minutes": int, "parallel_uploads": int,
     "subfolder_albums": bool, "auto": bool,
 }
 
@@ -491,6 +534,7 @@ def op_set_settings(data):
     if s.get("since"):
         datetime.strptime(s["since"], "%Y-%m-%d")  # raises ValueError if not YYYY-MM-DD
     s["interval_minutes"] = max(1, s["interval_minutes"])
+    s["parallel_uploads"] = min(16, max(1, int(s.get("parallel_uploads", 4))))
     save_settings(s)
     log("Settings saved.")
     wake.set()
@@ -676,7 +720,7 @@ V1 = [
      "Mark every file currently in the folder as skipped."),
     ("GET", "/api/v1/settings", lambda r: op_get_settings(), "Current settings."),
     ("PATCH", "/api/v1/settings", lambda r: op_set_settings(r.get_json(silent=True) or {}),
-     "Change settings (body: any of source, extensions, since, interval_minutes, min_age_minutes, subfolder_albums, auto, remote)."),
+     "Change settings (body: any of source, extensions, since, interval_minutes, min_age_minutes, subfolder_albums, auto, parallel_uploads, remote)."),
     ("GET", "/api/v1/logs", lambda r: op_logs(r.args.get("lines", 200)), "Recent activity (query: lines)."),
     ("POST", "/api/v1/google/check", lambda r: op_google_check(), "Test the Google Photos connection."),
 ]
@@ -736,6 +780,7 @@ MCP_TOOLS = [
      {"auto": {"type": "boolean", "description": "Upload automatically on a schedule"},
       "interval_minutes": {"type": "integer", "description": "Minutes between automatic runs"},
       "min_age_minutes": {"type": "integer", "description": "Only upload files unchanged for this many minutes"},
+      "parallel_uploads": {"type": "integer", "description": "How many files to upload at the same time (1-16)"},
       "since": {"type": "string", "description": "Only files dated on or after this day (YYYY-MM-DD)"},
       "extensions": {"type": "string", "description": "Comma separated file types, e.g. jpg,jpeg,heic,mp4"},
       "subfolder_albums": {"type": "boolean", "description": "Put photos from subfolders into albums named after the subfolder"},

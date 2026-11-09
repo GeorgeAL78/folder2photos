@@ -136,6 +136,8 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px}
     <input type="number" id="sInt" min="1">
     <label>Wait until a file is unchanged for (minutes) <small>(so half-copied files are not uploaded)</small></label>
     <input type="number" id="sMin" min="0">
+    <label>Upload this many files at the same time <small>(1-16; more is faster, 4 is a good start)</small></label>
+    <input type="number" id="sPar" min="1" max="16">
     <label>rclone remote name <small>(advanced)</small></label>
     <input type="text" id="sRemote">
     <div class="row" style="margin-top:16px"><button class="btn" id="saveBtn">Save</button><span class="msg" id="saveMsg"></span></div>
@@ -336,14 +338,14 @@ async function loadSettings() {
   const s = await api('/api/settings');
   $('sSource').value = s.source; $('sSub').checked = s.subfolder_albums;
   $('sExt').value = s.extensions; $('sSince').value = s.since; $('sAuto').checked = s.auto;
-  $('sInt').value = s.interval_minutes; $('sMin').value = s.min_age_minutes; $('sRemote').value = s.remote;
+  $('sInt').value = s.interval_minutes; $('sMin').value = s.min_age_minutes; $('sPar').value = s.parallel_uploads; $('sRemote').value = s.remote;
   $('gId').value = s.client_id; $('gSecret').value = s.client_secret;
 }
 $('saveBtn').onclick = async () => {
   try {
     await api('/api/settings', {source:$('sSource').value, subfolder_albums:$('sSub').checked,
       extensions:$('sExt').value, since:$('sSince').value, auto:$('sAuto').checked,
-      interval_minutes:+$('sInt').value, min_age_minutes:+$('sMin').value, remote:$('sRemote').value});
+      interval_minutes:+$('sInt').value, min_age_minutes:+$('sMin').value, parallel_uploads:+$('sPar').value, remote:$('sRemote').value});
     flash($('saveMsg'), 'Saved');
   } catch (e) { flash($('saveMsg'), e.message, false); }
 };

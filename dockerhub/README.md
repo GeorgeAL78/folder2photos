@@ -5,6 +5,8 @@ Watches a folder and uploads new photos and videos to Google Photos, all from a 
 - **Each file is uploaded once.** Folder2Photos keeps its own history (SQLite in `/config`), so a photo you delete in Google Photos is not uploaded again.
 - **No duplicates.** Before uploading, Folder2Photos fingerprints the file (SHA-1). A copy of a photo that was already uploaded, under another name or in another folder, is skipped and listed under Duplicates.
 - **Only new files.** On first start, only files dated from that day on are uploaded. You can change the date, or mark everything currently in the folder as skipped.
+- **Fast.** Uploads several files at the same time (4 by default, up to 16; set in Settings).
+- **Waits for Google.** Nothing is tried, or marked as failed, until a Google login is connected.
 - **Albums from subfolders.** Photos directly in the folder go to your Google Photos library without an album. Photos in a subfolder go to an album with the subfolder's name, e.g. `Hike 2026`. (Can be turned off.)
 - **API and MCP** so scripts and AI assistants can check status, start uploads and change settings.
 - **Web interface** with dashboard, waiting list, history (uploaded / failed / skipped, with "upload again"), settings, Google sign-in, and log.
