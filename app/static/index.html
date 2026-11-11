@@ -306,6 +306,7 @@ async function status() {
     $('rtxt').textContent = s.running ? `Uploading ${s.done} of ${s.total}` : 'Idle';
     $('runBtn').disabled = s.running;
     $('stopBtn').classList.toggle('hidden', !s.running);
+    if (!s.running) { $('stopBtn').disabled = false; $('stopBtn').textContent = 'Stop'; }
     $('bar').classList.toggle('hidden', !s.running);
     $('barfill').style.width = s.total ? (100 * s.done / s.total) + '%' : '0';
     $('cur').textContent = s.running && s.current ? 'Now: ' + s.current : (s.last_result ? 'Last result: ' + s.last_result : '');
@@ -389,7 +390,7 @@ $('skipBtn').onclick = async () => {
 };
 
 $('runBtn').onclick = async () => { await api('/api/run', {}); status(); };
-$('stopBtn').onclick = async () => { await api('/api/stop', {}); };
+$('stopBtn').onclick = async () => { $('stopBtn').disabled = true; $('stopBtn').textContent = 'Stopping…'; await api('/api/stop', {}); };
 $('pendRefresh').onclick = loadPending;
 
 $('gCheck').onclick = async () => { setGoogle({ok:null}); setGoogle(await api('/api/google/check', {})); };

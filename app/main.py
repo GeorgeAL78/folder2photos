@@ -12,12 +12,12 @@ import re
 import secrets
 import sqlite3
 import subprocess
+import tempfile
 import threading
 import time
 import urllib.parse
 import urllib.request
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 
@@ -377,6 +377,69 @@ def check_google(s=None):
     return res
 
 
+def upload_group(s, folder, items, on_done):
+    """Upload the files of one folder with ONE rclone process.
+
+    One process per album matters: rclone creates the album once and then uploads
+    several files into it at the same time (--transfers). Separate processes per file
+    each created their own album with the same name.
+    Returns {basename: error or None}.
+    """
+    album = album_for(s, items[0]["path"])
+    src = os.path.join(s["source"], folder) if folder else s["source"]
+    dest = f"{s['remote']}:album/{album}" if album else f"{s['remote']}:upload"
+    names = [os.path.basename(i["path"]) for i in items]
+    results = {n: "not uploaded" for n in names}
+    last_general = ""
+    fd, list_path = tempfile.mkstemp(prefix="f2p-", suffix=".txt")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("\n".join(names) + "\n")
+    cmd = [RCLONE, "--config", RCLONE_CONF, "copy", src, dest, "--files-from-raw", list_path,
+           "--no-check-dest", "--no-traverse", "--transfers", str(max(1, int(s["parallel_uploads"]))),
+           "--retries", "3", "--low-level-retries", "10", "--use-json-log", "-v", "--stats", "0"]
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+                                encoding="utf-8", errors="replace", bufsize=1)
+    except OSError as e:
+        os.unlink(list_path)
+        return {n: f"could not start rclone: {e}" for n in names}
+
+    def stopper():
+        while proc.poll() is None:
+            if state["stop"]:
+                proc.terminate()
+                return
+            time.sleep(0.5)
+
+    threading.Thread(target=stopper, daemon=True).start()
+    for line in proc.stderr:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            last_general = line[-400:]
+            continue
+        obj, level, msg = d.get("object"), d.get("level"), str(d.get("msg", ""))
+        if obj in results and level == "info" and msg.startswith("Copied"):
+            if results[obj] is not None:
+                results[obj] = None
+                on_done(obj)
+        elif obj in results and level in ("error", "critical") and results[obj] is not None:
+            results[obj] = msg[-400:]
+        elif level in ("error", "critical"):
+            last_general = msg[-400:]
+    proc.wait()
+    os.unlink(list_path)
+    if state["stop"]:
+        return {n: (None if e is None else "stopped") for n, e in results.items()}
+    for n, e in results.items():
+        if e == "not uploaded":
+            results[n] = last_general or f"rclone exited with code {proc.returncode}"
+    return results
+
+
 def run_upload():
     with lock:
         if state["running"]:
@@ -384,64 +447,11 @@ def run_upload():
         state.update(running=True, stop=False, done=0, total=0, current=None)
     s = load_settings()
     counts = {"uploaded": 0, "failed": 0, "dups": 0}
-    count_lock = threading.Lock()
-    active = set()
-
-    def finish_one(key):
-        with count_lock:
-            counts[key] += 1
-            state["done"] += 1
-
-    def show_current():
-        state["current"] = ", ".join(sorted(active)) if active else None
-
-    def upload_one(item, digest):
-        rel = item["path"]
-        album = album_for(s, rel)
-        if state["stop"]:
-            with count_lock:
-                state["done"] += 1
-            return
-        with count_lock:
-            active.add(rel)
-            show_current()
-        try:
-            try:
-                code, out = rclone(
-                    ["copyto", os.path.join(s["source"], rel), dest_for(s, rel), "--no-check-dest",
-                     "--retries", "3", "--low-level-retries", "10", "--stats", "0"],
-                    timeout=6 * 3600,
-                )
-            except subprocess.TimeoutExpired:
-                code, out = 1, "ERROR: upload timed out"
-            except OSError as e:
-                code, out = 1, f"ERROR: could not start rclone: {e}"
-            if code == 0:
-                record(rel, item["size"], item["mtime"], album, "uploaded", sha1=digest)
-                log(f"Uploaded {rel}" + (f" -> album '{album}'" if album else " (no album)"))
-                finish_one("uploaded")
-            else:
-                err = last_error_line(out)
-                record(rel, item["size"], item["mtime"], album, "failed", err, sha1=digest)
-                with db() as con:
-                    tries = con.execute("SELECT attempts FROM files WHERE path=?", (rel,)).fetchone()["attempts"]
-                note = (f" (tried {tries} times; not retried automatically, use 'Retry all failed')"
-                        if tries >= MAX_AUTO_ATTEMPTS else " (will retry on the next run)")
-                log(f"Failed {rel}: {err}{note}", "error")
-                finish_one("failed")
-        except Exception as e:  # noqa: BLE001  - a bug here must not freeze the run
-            log(f"Failed {rel}: unexpected error: {e}", "error")
-            finish_one("failed")
-        finally:
-            with count_lock:
-                active.discard(rel)
-                show_current()
-
+    result = ""
     try:
         if not os.path.isdir(s["source"]):
             raise RuntimeError(f"Source folder not found: {s['source']}")
         if not remote_configured(s):
-            state["total"] = 0
             raise RuntimeError("Not connected to Google yet; nothing was uploaded. Connect on the Google tab.")
         todo = pending(s)
         state["total"] = len(todo)
@@ -449,32 +459,62 @@ def run_upload():
             log("No new files.")
         else:
             log(f"Found {len(todo)} new file(s) to upload ({s['parallel_uploads']} at a time).")
-        seen = {}  # fingerprints in this run, so two copies in one batch upload once
-        with ThreadPoolExecutor(max_workers=max(1, int(s["parallel_uploads"]))) as pool:
-            for item in todo:
-                if state["stop"]:
-                    break
-                rel = item["path"]
-                album = album_for(s, rel)
-                # duplicate check (done here, one file at a time, before handing out uploads)
-                dup = find_duplicate(rel, item["size"], item["mtime"])
-                digest = None
-                if not dup:
-                    try:
-                        digest = sha1_of(os.path.join(s["source"], rel))
-                    except OSError as e:
-                        log(f"Cannot read {rel}: {e}", "error")
-                        with count_lock:
-                            state["done"] += 1
-                        continue
-                    dup = find_duplicate(rel, item["size"], item["mtime"], digest) or seen.get(digest)
-                if dup:
-                    record(rel, item["size"], item["mtime"], album, "duplicate", sha1=digest, duplicate_of=dup)
-                    log(f"Skipped {rel}: same photo as {dup}", "warn")
-                    finish_one("dups")
+
+        # 1. duplicate check, one file at a time, and group the rest by folder (= album)
+        groups, digests, seen = {}, {}, {}
+        for item in todo:
+            if state["stop"]:
+                break
+            rel = item["path"]
+            dup = find_duplicate(rel, item["size"], item["mtime"])
+            digest = None
+            if not dup:
+                try:
+                    digest = sha1_of(os.path.join(s["source"], rel))
+                except OSError as e:
+                    log(f"Cannot read {rel}: {e}", "error")
+                    state["done"] += 1
                     continue
-                seen[digest] = rel
-                pool.submit(upload_one, item, digest)
+                dup = find_duplicate(rel, item["size"], item["mtime"], digest) or seen.get(digest)
+            if dup:
+                record(rel, item["size"], item["mtime"], album_for(s, rel), "duplicate", sha1=digest, duplicate_of=dup)
+                log(f"Skipped {rel}: same photo as {dup}", "warn")
+                counts["dups"] += 1
+                state["done"] += 1
+                continue
+            seen[digest] = rel
+            digests[rel] = digest
+            groups.setdefault(os.path.dirname(rel), []).append(item)
+
+        # 2. one rclone process per folder/album, files in parallel inside it
+        for folder, items in groups.items():
+            if state["stop"]:
+                break
+            album = album_for(s, items[0]["path"])
+            by_name = {os.path.basename(i["path"]): i for i in items}
+            state["current"] = (f"{len(items)} file(s) to album '{album}'" if album
+                                else f"{len(items)} file(s) (no album)")
+
+            def on_done(name, by_name=by_name, album=album):
+                i = by_name[name]
+                record(i["path"], i["size"], i["mtime"], album, "uploaded", sha1=digests[i["path"]])
+                log(f"Uploaded {i['path']}" + (f" -> album '{album}'" if album else " (no album)"))
+                counts["uploaded"] += 1
+                state["done"] += 1
+
+            res = upload_group(s, folder, items, on_done)
+            for name, err in res.items():
+                if err is None or err == "stopped":
+                    continue
+                i = by_name[name]
+                record(i["path"], i["size"], i["mtime"], album, "failed", err, sha1=digests[i["path"]])
+                with db() as con:
+                    tries = con.execute("SELECT attempts FROM files WHERE path=?", (i["path"],)).fetchone()["attempts"]
+                note = (f" (tried {tries} times; not retried automatically, use 'Retry all failed')"
+                        if tries >= MAX_AUTO_ATTEMPTS else " (will retry on the next run)")
+                log(f"Failed {i['path']}: {err}{note}", "error")
+                counts["failed"] += 1
+                state["done"] += 1
         if state["stop"]:
             log("Stopped by user.", "warn")
         result = f"{counts['uploaded']} uploaded, {counts['dups']} duplicate(s) skipped, {counts['failed']} failed"
