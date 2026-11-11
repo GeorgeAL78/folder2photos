@@ -101,7 +101,7 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px}
   <div class="card">
     <div class="row" style="justify-content:space-between"><h2 style="margin:0">Waiting to upload</h2><button class="btn sec" id="pendRefresh">Refresh</button></div>
     <p class="muted" id="pendNote"></p>
-    <table><thead><tr><th>File</th><th>Size</th><th>Date</th></tr></thead><tbody id="pendBody"></tbody></table>
+    <table><thead><tr><th>File</th><th>Size</th><th>Date</th><th>Status</th></tr></thead><tbody id="pendBody"></tbody></table>
   </div>
 </section>
 
@@ -337,8 +337,14 @@ $('pwSave').onclick = async () => {
 async function loadPending() {
   const p = await api('/api/pending');
   $('cPend').textContent = p.items.length + (p.more ? '+' : '');
-  $('pendNote').textContent = p.items.length ? (p.more ? 'Showing the first 500.' : '') : 'Nothing waiting. New photos show up here once they have been in the folder for a few minutes.';
-  $('pendBody').innerHTML = p.items.map(i => `<tr><td class="path">${esc(i.path)}</td><td>${fmtSize(i.size)}</td><td>${new Date(i.mtime*1000).toLocaleString()}</td></tr>`).join('');
+  const notes = [];
+  if (!p.items.length) notes.push('Nothing waiting. New photos show up here as soon as they are in the folder.');
+  if (p.held) notes.push(`${p.held} file(s) were changed in the last few minutes; they wait until they stop changing, so half-copied files are not uploaded.`);
+  if (p.more) notes.push('Showing the first 500.');
+  $('pendNote').textContent = notes.join(' ');
+  const hm = t => new Date(t).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+  $('pendBody').innerHTML = p.items.map(i => `<tr><td class="path">${esc(i.path)}</td><td>${fmtSize(i.size)}</td><td>${new Date(i.mtime*1000).toLocaleString()}</td>` +
+    `<td class="${i.ready_at ? 'muted' : ''}">${i.ready_at ? 'Settling, ready at ' + hm(i.ready_at) : 'Ready'}</td></tr>`).join('');
 }
 
 let hStatus = 'uploaded';
@@ -418,6 +424,7 @@ async function loadLog() {
 
 status(); loadPending();
 setInterval(() => { status(); if (tab === 'log') loadLog(); }, 3000);
+setInterval(() => { if (tab === 'dash' && !document.hidden) loadPending(); }, 30000);
 </script>
 </body>
 </html>

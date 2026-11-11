@@ -279,11 +279,16 @@ def given_up_paths():
             "SELECT path FROM files WHERE status='failed' AND attempts>=?", (MAX_AUTO_ATTEMPTS,))}
 
 
-def pending(s, limit=None):
-    """New files ready to upload: not done yet and left unchanged for min_age_minutes."""
+def pending(s, limit=None, include_held=False):
+    """New files that are not uploaded yet.
+
+    A file is ready once it has not changed on disk for min_age_minutes, so half-copied
+    files are never uploaded. "Changed" uses the later of mtime and ctime: a copier can
+    restore the photo's original date (mtime), but ctime always shows when the copy wrote it.
+    With include_held, files still inside that wait are returned too, with "ready_at".
+    """
     done = known_paths() | given_up_paths()
     min_age = int(s["min_age_minutes"]) * 60
-    seen = None
     out = []
     for rel, _size, _mtime in scan(s):
         if rel in done:
@@ -292,13 +297,12 @@ def pending(s, limit=None):
             st = os.stat(os.path.join(s["source"], rel))
         except OSError:
             continue
-        if seen is None:  # read after scan() recorded newly seen files
-            with db() as con:
-                seen = {r["path"]: r["first_seen"] for r in con.execute("SELECT path, first_seen FROM seen")}
-        now = time.time()
-        if now - st.st_mtime < min_age or now - seen.get(rel, now) < min_age:
+        ready_ts = max(st.st_mtime, st.st_ctime) + min_age
+        held = time.time() < ready_ts
+        if held and not include_held:
             continue
-        out.append({"path": rel, "size": st.st_size, "mtime": st.st_mtime})
+        out.append({"path": rel, "size": st.st_size, "mtime": st.st_mtime,
+                    "ready_at": datetime.fromtimestamp(ready_ts).isoformat(timespec="seconds") if held else None})
         if limit and len(out) >= limit:
             break
     return out
@@ -542,8 +546,10 @@ def op_status():
 
 def op_pending(limit=500):
     limit = max(1, min(int(limit or 500), 5000))
-    items = pending(load_settings(), limit=limit + 1)
-    return {"items": items[:limit], "more": len(items) > limit}
+    items = pending(load_settings(), limit=limit + 1, include_held=True)
+    shown = items[:limit]
+    return {"items": shown, "more": len(items) > limit,
+            "held": sum(1 for i in shown if i["ready_at"])}
 
 
 def op_files(status="uploaded", query="", limit=500):
@@ -909,7 +915,8 @@ MCP_TOOLS = [
     ("get_status", "Show whether Folder2Photos is uploading or idle, progress, how many files were uploaded / failed / "
      "skipped / duplicates, the Google Photos connection, and when the next automatic run is.",
      {}, lambda a: op_status()),
-    ("list_pending", "List photos and videos in the watched folder that are waiting to be uploaded.",
+    ("list_pending", "List photos and videos in the watched folder that are waiting to be uploaded. Items with "
+     "ready_at are still settling (recently copied) and are uploaded by the first run after that time.",
      {"limit": {"type": "integer", "description": "Max items (default 100)"}},
      lambda a: op_pending(a.get("limit", 100))),
     ("list_history", "List files from the upload history.",
