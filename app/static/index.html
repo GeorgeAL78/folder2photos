@@ -120,6 +120,14 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px}
     </div>
     <p class="muted">Files listed here are never uploaded again. "Upload again" removes a file from this list so the next run uploads it.</p>
     <table><thead><tr><th>File</th><th>Album</th><th>When</th><th id="hErrH">Error</th><th></th></tr></thead><tbody id="hBody"></tbody></table>
+    <div class="row" style="justify-content:space-between;margin-top:12px">
+      <div class="row"><span class="muted">Rows per page</span>
+        <select id="hSize" style="background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit">
+          <option>10</option><option selected>25</option><option>50</option><option>100</option>
+        </select></div>
+      <div class="row"><span class="muted" id="hRange"></span>
+        <button class="btn sec" id="hPrev">&lsaquo; Previous</button><button class="btn sec" id="hNext">Next &rsaquo;</button></div>
+    </div>
   </div>
 </section>
 
@@ -349,16 +357,28 @@ async function loadPending() {
     `<td class="${i.ready_at ? 'muted' : ''}">${i.ready_at ? 'Settling, ready at ' + hm(i.ready_at) : 'Ready'}</td></tr>`).join('');
 }
 
-let hStatus = 'uploaded';
-document.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { hStatus = b.dataset.st; loadHistory(); });
-let hTimer; $('hq').oninput = () => { clearTimeout(hTimer); hTimer = setTimeout(loadHistory, 300); };
+let hStatus = 'uploaded', hPage = 0, hTotal = 0;
+let hSize = 25;
+try { hSize = +localStorage.getItem('f2p.histSize') || 25; } catch (e) {}
+$('hSize').value = String(hSize);
+$('hSize').onchange = () => { hSize = +$('hSize').value; try { localStorage.setItem('f2p.histSize', hSize); } catch (e) {} hPage = 0; loadHistory(); };
+$('hPrev').onclick = () => { if (hPage > 0) { hPage--; loadHistory(); } };
+$('hNext').onclick = () => { if ((hPage + 1) * hSize < hTotal) { hPage++; loadHistory(); } };
+document.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { hStatus = b.dataset.st; hPage = 0; loadHistory(); });
+let hTimer; $('hq').oninput = () => { clearTimeout(hTimer); hTimer = setTimeout(() => { hPage = 0; loadHistory(); }, 300); };
 async function loadHistory() {
   document.querySelectorAll('[data-st]').forEach(b => b.className = 'btn ' + (b.dataset.st === hStatus ? '' : 'sec'));
   $('retryFailed').classList.toggle('hidden', hStatus !== 'failed');
   const extra = hStatus === 'failed' || hStatus === 'duplicate';
   $('hErrH').classList.toggle('hidden', !extra);
   $('hErrH').textContent = hStatus === 'duplicate' ? 'Same photo as' : 'Error';
-  const rows = await api('/api/files?status=' + hStatus + '&q=' + encodeURIComponent($('hq').value));
+  const res = await api(`/api/files?status=${hStatus}&q=${encodeURIComponent($('hq').value)}&limit=${hSize}&offset=${hPage * hSize}`);
+  hTotal = res.total;
+  if (!res.items.length && hPage > 0) { hPage = Math.max(0, Math.ceil(hTotal / hSize) - 1); return loadHistory(); }
+  const rows = res.items;
+  $('hRange').textContent = hTotal ? `${hPage * hSize + 1}–${hPage * hSize + rows.length} of ${hTotal}` : '';
+  $('hPrev').disabled = hPage === 0;
+  $('hNext').disabled = (hPage + 1) * hSize >= hTotal;
   $('hBody').innerHTML = rows.length ? rows.map(r => `<tr><td class="path">${esc(r.path)}</td><td>${esc(r.album || '–')}</td><td>${fmtT(r.updated)}</td>` +
     (extra ? `<td class="muted path">${esc(hStatus === 'duplicate' ? r.duplicate_of : r.error)}</td>` : '') +
     `<td><button class="btn sec" data-forget="${esc(r.path)}">Upload again</button></td></tr>`).join('')

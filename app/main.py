@@ -672,18 +672,21 @@ def op_pending(limit=500):
             "held": sum(1 for i in shown if i["ready_at"])}
 
 
-def op_files(status="uploaded", query="", limit=500):
+def op_files(status="uploaded", query="", limit=500, offset=0):
+    """One page of the history, newest first, plus the total for paging."""
     if status not in ("uploaded", "failed", "skipped", "duplicate"):
         raise ValueError("status must be uploaded, failed, skipped or duplicate")
     limit = max(1, min(int(limit or 500), 5000))
-    sql, args = "SELECT * FROM files WHERE status=?", [status]
+    offset = max(0, int(offset or 0))
+    where, args = "WHERE status=?", [status]
     if query:
-        sql += " AND path LIKE ?"
+        where += " AND path LIKE ?"
         args.append(f"%{query}%")
-    sql += " ORDER BY updated DESC LIMIT ?"
-    args.append(limit)
     with db() as con:
-        return {"items": [dict(r) for r in con.execute(sql, args)]}
+        total = con.execute(f"SELECT COUNT(*) FROM files {where}", args).fetchone()[0]
+        rows = con.execute(f"SELECT * FROM files {where} ORDER BY updated DESC, path LIMIT ? OFFSET ?",
+                           args + [limit, offset])
+        return {"items": [dict(r) for r in rows], "total": total, "offset": offset, "limit": limit}
 
 
 def op_forget(paths):
@@ -884,7 +887,8 @@ def api_pending():
 @app.get("/api/files")
 @auth_required
 def api_files():
-    return call(lambda: op_files(request.args.get("status", "uploaded"), request.args.get("q", "").strip())["items"])
+    a = request.args
+    return call(op_files, a.get("status", "uploaded"), a.get("q", "").strip(), a.get("limit", 25), a.get("offset", 0))
 
 
 @app.post("/api/files/forget")
@@ -985,8 +989,9 @@ V1 = [
      "Current state: running or idle, progress, counts, Google connection, next run."),
     ("GET", "/api/v1/pending", lambda r: op_pending(r.args.get("limit", 500)),
      "Files waiting to be uploaded (query: limit)."),
-    ("GET", "/api/v1/files", lambda r: op_files(r.args.get("status", "uploaded"), r.args.get("q", ""), r.args.get("limit", 500)),
-     "Upload history (query: status=uploaded|failed|skipped|duplicate, q=search text, limit)."),
+    ("GET", "/api/v1/files", lambda r: op_files(r.args.get("status", "uploaded"), r.args.get("q", ""),
+                                                 r.args.get("limit", 500), r.args.get("offset", 0)),
+     "Upload history, newest first (query: status=uploaded|failed|skipped|duplicate, q=search text, limit, offset; returns total)."),
     ("POST", "/api/v1/upload", lambda r: op_run(), "Start an upload run now."),
     ("POST", "/api/v1/stop", lambda r: op_stop(), "Stop the running upload after the current file."),
     ("POST", "/api/v1/files/forget", lambda r: op_forget((r.get_json(silent=True) or {}).get("paths")),
@@ -1042,8 +1047,9 @@ MCP_TOOLS = [
     ("list_history", "List files from the upload history.",
      {"status": {"type": "string", "enum": ["uploaded", "failed", "skipped", "duplicate"], "description": "Default: uploaded"},
       "query": {"type": "string", "description": "Part of the file path to search for"},
-      "limit": {"type": "integer", "description": "Max items (default 100)"}},
-     lambda a: op_files(a.get("status", "uploaded"), a.get("query", ""), a.get("limit", 100))),
+      "limit": {"type": "integer", "description": "Max items (default 100)"},
+      "offset": {"type": "integer", "description": "Skip this many items, for the next page (default 0)"}},
+     lambda a: op_files(a.get("status", "uploaded"), a.get("query", ""), a.get("limit", 100), a.get("offset", 0))),
     ("upload_now", "Start uploading new files to Google Photos now.", {}, lambda a: op_run()),
     ("stop_upload", "Stop the running upload after the current file.", {}, lambda a: op_stop()),
     ("retry_failed", "Retry every upload that failed.", {}, lambda a: op_retry_failed()),
