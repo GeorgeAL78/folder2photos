@@ -130,6 +130,7 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px}
     <label>Photo folder <small>(path inside the container; map your share to it in Docker)</small></label>
     <input type="text" id="sSource">
     <div class="check"><input type="checkbox" id="sSub"><span>Make albums from subfolders <small class="muted">(photos in "Hike 2026" go to an album "Hike 2026"; photos directly in the folder get no album)</small></span></div>
+    <div class="check"><input type="checkbox" id="sDate"><span>Name date folders year-month-day <small class="muted">(a folder 11-11-2026 from PlayMemories becomes the album 2026-11-11; folders that already have an album keep it)</small></span></div>
     <label>File types <small>(comma separated)</small></label>
     <input type="text" id="sExt">
     <label>Only files dated on or after <small>(required; photos with an older date are still uploaded if you add them to the folder later)</small></label>
@@ -370,7 +371,7 @@ $('retryFailed').onclick = async () => { await api('/api/files/retry-failed', {}
 
 async function loadSettings() {
   const s = await api('/api/settings');
-  $('sSource').value = s.source; $('sSub').checked = s.subfolder_albums;
+  $('sSource').value = s.source; $('sSub').checked = s.subfolder_albums; $('sDate').checked = s.date_albums !== false;
   $('sExt').value = s.extensions; $('sSince').value = s.since; $('sAuto').checked = s.auto;
   $('sInt').value = s.interval_minutes; $('sMin').value = s.min_age_minutes; $('sPar').value = s.parallel_uploads; $('sRemote').value = s.remote;
   $('gId').value = s.client_id; $('gSecret').value = s.client_secret;
@@ -378,7 +379,7 @@ async function loadSettings() {
 }
 $('saveBtn').onclick = async () => {
   try {
-    await api('/api/settings', {source:$('sSource').value, subfolder_albums:$('sSub').checked,
+    await api('/api/settings', {source:$('sSource').value, subfolder_albums:$('sSub').checked, date_albums:$('sDate').checked,
       extensions:$('sExt').value, since:$('sSince').value, auto:$('sAuto').checked,
       interval_minutes:+$('sInt').value, min_age_minutes:+$('sMin').value, parallel_uploads:+$('sPar').value, remote:$('sRemote').value});
     flash($('saveMsg'), 'Saved');

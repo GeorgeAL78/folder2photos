@@ -51,6 +51,7 @@ DEFAULTS = {
     "interval_minutes": 15,
     "min_age_minutes": 10,
     "parallel_uploads": 4,
+    "date_albums": True,
     "auto": True,
     "client_id": "",
     "client_secret": "",
@@ -136,6 +137,7 @@ def init_db():
             con.execute("ALTER TABLE files ADD COLUMN duplicate_of TEXT")
         con.execute("CREATE INDEX IF NOT EXISTS idx_sha1 ON files(sha1)")
         con.execute("CREATE TABLE IF NOT EXISTS seen (path TEXT PRIMARY KEY, first_seen REAL)")
+        con.execute("CREATE TABLE IF NOT EXISTS albums (folder TEXT PRIMARY KEY, title TEXT, album_id TEXT)")
 
 
 def sha1_of(path):
@@ -308,18 +310,79 @@ def pending(s, limit=None, include_held=False):
     return out
 
 
-def album_for(s, rel):
-    """Album named after the file's subfolder; '' (no album) for files in the top folder."""
-    if not s["subfolder_albums"]:
+DATE_FOLDER = re.compile(r"^(\d{1,2})[-._ ](\d{1,2})[-._ ](\d{4})$")   # month-day-year, e.g. 11-11-2026
+
+
+def _date_title(part):
+    m = DATE_FOLDER.match(part)
+    if m:
+        month, day, year = int(m.group(1)), int(m.group(2)), m.group(3)
+        if 1 <= month <= 12 and 1 <= day <= 31:
+            return f"{year}-{month:02d}-{day:02d}"
+    return part
+
+
+def album_title(s, folder):
+    """Album name for a folder ('' = no album): the folder name, with month-day-year
+    date folders (as made by camera import tools) written as year-month-day."""
+    folder = folder.strip("/")
+    if not s["subfolder_albums"] or not folder:
         return ""
-    return os.path.dirname(rel).strip("/")
+    if s.get("date_albums", True):
+        folder = "/".join(_date_title(p) for p in folder.split("/"))
+    return folder
 
 
-def dest_for(s, rel):
-    album = album_for(s, rel)
-    name = os.path.basename(rel)
-    # 'upload/' adds the photo to the library without putting it in an album
-    return f"{s['remote']}:album/{album}/{name}" if album else f"{s['remote']}:upload/{name}"
+def album_for(s, rel):
+    """Album a file goes to: the one remembered for its folder, else the name from album_title()."""
+    folder = os.path.dirname(rel).strip("/")
+    if not s["subfolder_albums"] or not folder:
+        return ""
+    with db() as con:
+        r = con.execute("SELECT title FROM albums WHERE folder=?", (folder,)).fetchone()
+    return r["title"] if r else album_title(s, folder)
+
+
+ID_SUFFIX = re.compile(r" \{[^{}]+\}$")   # rclone adds " {albumID}" when two albums share a name
+
+
+def list_albums(s):
+    """[(rclone path, album id)] of the albums this app created."""
+    code, out = rclone(["lsjson", "-R", "--dirs-only", f"{s['remote']}:album"], timeout=300)
+    if code != 0:
+        raise RuntimeError(f"Could not list albums: {last_error_line(out)}")
+    return [(a["Path"], a["ID"]) for a in json.loads(out[out.index("["):]) if a.get("ID")]
+
+
+def resolve_album(s, folder, albums):
+    """The rclone album path to upload a folder to, so a folder always uses ONE album.
+
+    Order: the album remembered for this folder (by ID, so same-name albums don't
+    matter); an existing album with the new name; an existing album with the folder's
+    own name (made before date naming, kept as it is); otherwise a new album.
+    Returns (rclone path, title).
+    """
+    folder = folder.strip("/")
+    by_id = {aid: path for path, aid in albums}
+    with db() as con:
+        r = con.execute("SELECT title, album_id FROM albums WHERE folder=?", (folder,)).fetchone()
+    if r and r["album_id"] in by_id:
+        return by_id[r["album_id"]], r["title"]
+    for title in dict.fromkeys([album_title(s, folder), folder]):
+        same = sorted((path, aid) for path, aid in albums if ID_SUFFIX.sub("", path) == title)
+        if same:
+            path, aid = same[0]
+            remember_album(folder, title, aid)
+            return path, title
+    title = album_title(s, folder)
+    return title, title
+
+
+def remember_album(folder, title, album_id):
+    with db() as con:
+        con.execute("INSERT INTO albums(folder, title, album_id) VALUES(?,?,?) "
+                    "ON CONFLICT(folder) DO UPDATE SET title=excluded.title, album_id=excluded.album_id",
+                    (folder.strip("/"), title, album_id))
 
 
 def rclone(args, timeout=None):
@@ -377,7 +440,7 @@ def check_google(s=None):
     return res
 
 
-def upload_group(s, folder, items, on_done):
+def upload_group(s, folder, items, on_done, album_path=""):
     """Upload the files of one folder with ONE rclone process.
 
     One process per album matters: rclone creates the album once and then uploads
@@ -385,9 +448,9 @@ def upload_group(s, folder, items, on_done):
     each created their own album with the same name.
     Returns {basename: error or None}.
     """
-    album = album_for(s, items[0]["path"])
     src = os.path.join(s["source"], folder) if folder else s["source"]
-    dest = f"{s['remote']}:album/{album}" if album else f"{s['remote']}:upload"
+    # 'upload' adds photos to the library without an album
+    dest = f"{s['remote']}:album/{album_path}" if album_path else f"{s['remote']}:upload"
     names = [os.path.basename(i["path"]) for i in items]
     results = {n: "not uploaded" for n in names}
     last_general = ""
@@ -487,10 +550,16 @@ def run_upload():
             groups.setdefault(os.path.dirname(rel), []).append(item)
 
         # 2. one rclone process per folder/album, files in parallel inside it
+        albums = []
+        if groups and s["subfolder_albums"]:
+            try:
+                albums = list_albums(s)
+            except RuntimeError as e:
+                log(f"{e}; albums are matched by name only this run.", "warn")
         for folder, items in groups.items():
             if state["stop"]:
                 break
-            album = album_for(s, items[0]["path"])
+            album_path, album = resolve_album(s, folder, albums) if (s["subfolder_albums"] and folder) else ("", "")
             by_name = {os.path.basename(i["path"]): i for i in items}
             state["current"] = (f"{len(items)} file(s) to album '{album}'" if album
                                 else f"{len(items)} file(s) (no album)")
@@ -502,7 +571,18 @@ def run_upload():
                 counts["uploaded"] += 1
                 state["done"] += 1
 
-            res = upload_group(s, folder, items, on_done)
+            res = upload_group(s, folder, items, on_done, album_path)
+            if album and not ID_SUFFIX.search(album_path) and any(e is None for e in res.values()):
+                with db() as con:
+                    known = con.execute("SELECT album_id FROM albums WHERE folder=?", (folder,)).fetchone()
+                if not known:  # the album was just created: remember it for this folder
+                    try:
+                        albums = list_albums(s)
+                        same = sorted((p, a) for p, a in albums if ID_SUFFIX.sub("", p) == album)
+                        if same:
+                            remember_album(folder, album, same[0][1])
+                    except RuntimeError as e:
+                        log(f"Could not look up the new album '{album}': {e}", "warn")
             for name, err in res.items():
                 if err is None or err == "stopped":
                     continue
@@ -661,7 +741,7 @@ def op_get_settings():
 SETTING_KEYS = {
     "source": str, "remote": str, "extensions": str, "since": str,
     "interval_minutes": int, "min_age_minutes": int, "parallel_uploads": int,
-    "subfolder_albums": bool, "auto": bool,
+    "subfolder_albums": bool, "auto": bool, "date_albums": bool,
 }
 
 
@@ -981,6 +1061,7 @@ MCP_TOOLS = [
       "since": {"type": "string", "description": "Only files dated on or after this day (YYYY-MM-DD)"},
       "extensions": {"type": "string", "description": "Comma separated file types, e.g. jpg,jpeg,heic,mp4"},
       "subfolder_albums": {"type": "boolean", "description": "Put photos from subfolders into albums named after the subfolder"},
+      "date_albums": {"type": "boolean", "description": "Name albums for date folders like 11-11-2026 (month-day-year) as 2026-11-11"},
       "source": {"type": "string", "description": "Folder to watch (path inside the container)"}},
      lambda a: op_set_settings(a)),
     ("get_log", "Show recent activity.", {"lines": {"type": "integer", "description": "Default 100"}},

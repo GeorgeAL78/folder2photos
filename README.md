@@ -8,7 +8,7 @@ Watches a folder and uploads new photos and videos to Google Photos, all from a 
 - **Fast.** Uploads several files at the same time (4 by default, up to 16; set in Settings).
 - **Waits for Google.** Nothing is tried, or marked as failed, until a Google login is connected. A file that keeps failing is tried 3 times, then waits for "Retry all failed".
 - **Easy on disks.** Each check only re-reads folders that changed, so a large, unchanged library is not read file by file every time.
-- **Albums from subfolders.** Photos directly in the folder go to your Google Photos library without an album. Photos in a subfolder go to an album with the subfolder's name, e.g. `Hike 2026`. (Can be turned off.)
+- **Albums from subfolders.** Photos directly in the folder go to your Google Photos library without an album. Photos in a subfolder go to an album with the subfolder's name, e.g. `Hike 2026`. (Can be turned off.) Date folders written month-day-year, as camera import tools like PlayMemories Home make them (`11-11-2026`), become albums named year-month-day (`2026-11-11`); this can be turned off. Each folder keeps one album: the app remembers which album belongs to which folder, so later files from the same folder always join it, even if Google Photos has several albums with the same name.
 - **API and MCP** so scripts and AI assistants can check status, start uploads and change settings.
 - **Web interface** with dashboard, waiting list, history (uploaded / failed / skipped, with "upload again"), settings, Google sign-in, and log.
 
