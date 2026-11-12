@@ -444,7 +444,12 @@ async function loadLog() {
   if (atBottom) box.scrollTop = box.scrollHeight;
 }
 
-status(); loadPending();
+status();
+{ // open a tab from the address, e.g. http://server:8080/#history
+  const t = location.hash.slice(1);
+  if (t && document.getElementById(t) && document.querySelector(`#nav [data-tab="${t}"]`)) show(t); else loadPending();
+}
+window.addEventListener('hashchange', () => { const t = location.hash.slice(1); if (document.querySelector(`#nav [data-tab="${t}"]`)) show(t); });
 setInterval(() => { status(); if (tab === 'log') loadLog(); }, 3000);
 setInterval(() => { if (tab === 'dash' && !document.hidden) loadPending(); }, 30000);
 </script>

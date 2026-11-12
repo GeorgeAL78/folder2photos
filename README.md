@@ -14,6 +14,8 @@ Watches a folder and uploads new photos and videos to Google Photos, all from a 
 
 Uploads use [rclone](https://rclone.org/googlephotos/)'s Google Photos backend.
 
+![Dashboard](assets/screenshots/dash.png)
+
 ## Run
 
 ```bash

@@ -22,6 +22,12 @@ Needs your own Google Cloud OAuth client (Desktop app) with the Photos Library A
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/GeorgeAL78/unraid-templates/main/folder2photos.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/GeorgeAL78/folder2photos/main/assets/icon.png</Icon>
+  <Screenshot>https://raw.githubusercontent.com/GeorgeAL78/folder2photos/main/assets/screenshots/dash.png</Screenshot>
+  <Screenshot>https://raw.githubusercontent.com/GeorgeAL78/folder2photos/main/assets/screenshots/history.png</Screenshot>
+  <Screenshot>https://raw.githubusercontent.com/GeorgeAL78/folder2photos/main/assets/screenshots/settings.png</Screenshot>
+  <Screenshot>https://raw.githubusercontent.com/GeorgeAL78/folder2photos/main/assets/screenshots/google.png</Screenshot>
+  <Screenshot>https://raw.githubusercontent.com/GeorgeAL78/folder2photos/main/assets/screenshots/apitab.png</Screenshot>
+  <Screenshot>https://raw.githubusercontent.com/GeorgeAL78/folder2photos/main/assets/screenshots/log.png</Screenshot>
   <ExtraParams>--restart=unless-stopped</ExtraParams>
   <Requires>A Google Cloud project with the Photos Library API enabled and an OAuth client of type "Desktop app". Setup steps are in the project README.</Requires>
 
